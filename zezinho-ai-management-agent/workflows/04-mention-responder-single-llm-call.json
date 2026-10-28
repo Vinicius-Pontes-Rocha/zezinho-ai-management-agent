@@ -1,0 +1,2219 @@
+{
+  "name": "04-mention-responder-single-llm-call",
+  "nodes": [
+    {
+      "name": "A cada 5 min (2 min depois do vigia)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "2-59/5 8-18 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Menções pendentes",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        288
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "anyCondition",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "nova"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "fila"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "processando"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 20,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "ASC"
+      }
+    },
+    {
+      "name": "Testar agora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        384
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Gasto de hoje",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        288
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "dia",
+              "condition": "eq",
+              "keyValue": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd') }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Preferências do gestor",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        288
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "categoria",
+              "condition": "eq",
+              "keyValue": "preferencia_do_gestor"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 15,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      }
+    },
+    {
+      "name": "Decidir (teto e modelo)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        288
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// CONTADOR DIÁRIO: se o gasto de hoje passar do teto, a menção vai para a FILA (responde no dia seguinte).\nconst TETO_DIA = 1.50;          // R$ por dia útil só das menções (27/10: era 2,50; ~90 menções/dia; pior caso R$ 33/mês; teto total de IA: R$ 70/mês)\nconst TETO_CEO = 0.50;           // 28/10: teto SEPARADO do CEO (privado ou @), ~30 respostas/dia; não come o teto da equipe\nconst CEO_NOME = /Jos[ée] Redacted/i; // como o nome do CEO aparece em \"quem\" na tabela de consumo\nconst MAX_POR_RONDA = 3;\nconst MODELO_PADRAO = 'gemini-3.5-flash-lite';\nconst MODELO_RELATORIO = 'gemini-3.5-flash-lite'; // com a chave paga: 'gemini-3.5-flash'\nconst ESTIMATIVA = { leve: 0.05, forte: 0.25 }; // R$ por chamada, para não estourar no meio da ronda\n// Perguntas sobre automações recebem o status do n8n no pacote\nconst SOBRE_N8N = /n8n|automa|rob[oô]|fluxo|workflow|\\bata\\b|\\batas\\b|zoom|n[aã]o saiu|n[aã]o chegou|n[aã]o veio|erro|resumo dos chats|fatura|cart[aã]o|contrato|autentique/i;\nconst statusN8n = ($('Resumo do n8n').first() || { json: {} }).json.texto || '';\nconst agora = Date.now();\nconst gasto = $('Gasto de hoje').all().reduce((s, i) => s + (Number(i.json.custo_brl) || 0), 0);\nconst prefs = $('Preferências do gestor').all().map(i => i.json).filter(p => p.descricao).map(p => '• ' + String(p.descricao).slice(0, 300)).join('\\n');\n// MEMÓRIA (sem IA): avaliações anteriores e base de conhecimento\nconst avaliacoes = $('Avaliações recentes').all().map(i => i.json).filter(a => a.id);\nconst base = $('Base de conhecimento recente').all().map(i => i.json).filter(b => b.descricao && b.categoria !== 'preferencia_do_gestor');\n// PRIVACIDADE: registros com setor 'Restrito...' (falas do CEO) só entram no pacote quando quem mencionou é CEO ou TI.\nconst baseEquipe = base.filter(b => !String(b.setor || '').startsWith('Restrito'));\nconst exemplos = avaliacoes.filter(a => a.status === 'aprovado' && a.resposta_proposta).slice(0, 2)\n  .map(a => '--- exemplo aprovado ---\\n' + String(a.resposta_proposta).slice(0, 1400)).join('\\n');\nconst palavras = t => new Set((String(t).match(/[A-ZÀ-Ý][A-Za-zÀ-ÿ]{3,}/g) || []).map(w => w.toLowerCase()).filter(w => !['para', 'próxima', 'próximo', 'relatório', 'cliente', 'clientes', 'reunião', 'contatos', 'lista', 'listas', 'resumo', 'Redacted', 'Redacted', 'contabilidade', 'foram', 'foco', 'realizar', 'manter', 'acompanhar', 'encaminhar', 'programar', 'retomar'].includes(w)));\nconst pend = $('Menções pendentes').all().map(i => i.json)\n  .filter(m => (Number(m.tentativas) || 0) < 3)\n  // \"processando\" há mais de 20 min = travou; tenta de novo\n  .filter(m => m.status !== 'processando' || (agora - new Date(m.atualizado_em || m.updatedAt).getTime()) > 20 * 60000)\n  .slice(0, MAX_POR_RONDA);\nconst SETORES = [\n  [/comercial|\\bcs\\b|sucesso|relacionamento/i, 'Customer Success', 'atendimento'],\n  [/fiscont|fiscal|tribut/i, 'Fiscal', 'fiscal'],\n  [/\\bdp\\b|rh|pessoal/i, 'Departamento Pessoal', 'dp'],\n  [/societ|legaliz/i, 'Legalização', 'legalizacao'],\n  [/financ/i, 'Financeiro', 'atendimento'],\n  [/cont[aá]b/i, 'Contábil', 'contabil'],\n];\nconst gastoCeo = $('Gasto de hoje').all().filter(i => CEO_NOME.test(String(i.json.quem || ''))).reduce((s, i) => s + (Number(i.json.custo_brl) || 0), 0);\nconst somas = { equipe: gasto - gastoCeo, ceo: gastoCeo };\nreturn pend.map(m => {\n  const s = SETORES.find(x => x[0].test(m.space_nome || '')) || [null, 'Diretrizes do CEO', 'geral'];\n  const texto = String(m.texto || '');\n  const pareceRelatorio = /relat[oó]rio|fechamento|resumo do dia|cobertura|semáforo/i.test(texto) || texto.length > 800 || (m.anexos && m.anexos !== '[]');\n  const modelo = pareceRelatorio ? MODELO_RELATORIO : MODELO_PADRAO;\n  const est = modelo === MODELO_PADRAO ? ESTIMATIVA.leve : ESTIMATIVA.forte;\n  const pote = m.papel === 'ceo' || CEO_NOME.test(String(m.autor || '')) ? 'ceo' : 'equipe';\n  const acao = somas[pote] + est <= (pote === 'ceo' ? TETO_CEO : TETO_DIA) ? 'responder' : 'fila';\n  if (acao === 'responder') somas[pote] += est;\n  // Histórico da pessoa: últimas 3 avaliações de quem postou (para comparar evolução)\n  const historico = avaliacoes.filter(a => a.autor === m.autor && a.message_id !== m.message_id).slice(0, 3)\n    .map(a => '• ' + String(a.criado_em || a.createdAt).slice(0, 10) + ' — ' + (a.titulo_relatorio || '') + ' — nota ' + a.nota + ' — melhorias pedidas: ' + String(a.melhorias || '').replace(/\\n/g, '; ').slice(0, 300)).join('\\n');\n  // Registros/fatos da base que citam os mesmos nomes da mensagem\n  const p = palavras(texto);\n  const fonte = (m.papel === 'ceo' || m.papel === 'ti') ? base : baseEquipe;\n  const memoria = fonte.filter(b => { const q = palavras((b.titulo || '') + ' ' + b.descricao); for (const w of q) if (p.has(w)) return true; return false; }).slice(0, 8)\n    .map(b => '• [' + String(b.data_info || b.createdAt).slice(0, 10) + ', ' + (b.categoria || '') + '] ' + (b.titulo || '') + ': ' + String(b.descricao).slice(0, 250)).join('\\n');\n  return { json: { ...m, acao, modelo, nota_setor: s[1], checklist: s[2], prefs, n8n_status: SOBRE_N8N.test(texto + ' ' + (m.conversa_antes || '')) ? statusN8n : '', historico, memoria, exemplos: pareceRelatorio ? exemplos : '', gasto_hoje: Math.round(gasto * 100) / 100 } };\n});"
+      }
+    },
+    {
+      "name": "Dentro do teto?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        288
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.acao }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "responder"
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Marcar processando",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "processando",
+            "tentativas": "={{ (Number($json.tentativas) || 0) + 1 }}",
+            "atualizado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tentativas",
+              "displayName": "tentativas",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Ler nota do setor (cofre)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "mode": "each",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "busca": "={{ $('Dentro do teto?').item.json.nota_setor }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "busca",
+              "displayName": "busca",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "name": "Montar pedido ao Gemini",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Junta TUDO num pacote só: o Gemini é chamado UMA vez por menção.\nconst m = $('Dentro do teto?').item.json;\nconst nota = String($json.resultado || '').slice(0, 6000);\nconst hoje = $now.setZone('America/Sao_Paulo').toFormat('dd/MM/yyyy HH:mm (cccc)', { locale: 'pt-BR' });\nconst CHECK = {\n  atendimento: 'Período, responsável e objetivo claros; indicadores (atendimentos, ligações, contatos efetivos, reuniões, propostas, clientes novos/perdidos); pendências e reclamações com dono e prazo; riscos de cancelamento e ação proposta; comparação com período anterior/meta; próximos passos concretos; separar contato, resposta, reunião, proposta, fechamento e recebimento.',\n  fiscal: 'Empresa, competência e regime; faturamento do período e 12 meses; apurações (DAS, PIS/COFINS, IRPJ/CSLL, ICMS, ISS) e vencimentos; notas canceladas/faltantes; retenções e EFD-Reinf/DCTFWeb; obrigações acessórias entregues no prazo; parcelamentos e pendências no e-CAC; risco de multa com ação.',\n  dp: 'Competência, admissões/demissões; folha e variações explicadas; eSocial enviado; INSS/FGTS Digital/IRRF e vencimentos; rescisão paga em até 10 dias do término (art. 477); férias pagas até 2 dias antes; documentos pendentes com prazo.',\n  legalizacao: 'Processos em andamento com cliente, órgão, etapa, data, previsão, pendência e responsável; exigências e prazo; certificados e certidões vencendo; processos parados.',\n  contabil: 'Competência e empresa; conciliações (bancos, clientes, fornecedores, impostos); contas transitórias com saldo; balancete/DRE/Balanço batem; provisões; documentos faltando do cliente com prazo; variações explicadas.',\n  geral: 'O que foi feito, resultado, o que está bloqueado e a próxima ação com responsável e data.'\n};\nconst SCHEMA = { type: 'OBJECT', properties: {\n  tipo: { type: 'STRING', enum: ['relatorio', 'relato', 'pergunta', 'registro', 'conversa'] },\n  titulo: { type: 'STRING' }, setor: { type: 'STRING' }, nota: { type: 'NUMBER' },\n  pontos_fortes: { type: 'STRING' }, riscos: { type: 'STRING' }, melhorias: { type: 'STRING' },\n  resposta: { type: 'STRING' }, registro: { type: 'STRING' } }, required: ['tipo', 'titulo', 'setor', 'resposta'] };\nconst sistema = [\n  'Você é o Zezinho, gestor de IA da Redacted Contabilidade (REDACTED), escritório de contabilidade. Alguém da equipe te marcou no Google Chat. Você faz o papel do gestor que acompanha a equipe (hoje o CEO faz isso à mão): exigente, específico, respeitoso e direto. Agora: ' + hoje + ' (Brasília).',\n  '',\n  '1) CLASSIFIQUE a MENSAGEM QUE TE MARCOU (a conversa antes é só contexto) em \"tipo\":',\n  '- relatorio: relatório, fechamento, resumo de atividades, prestação de contas, status de carteira/ligações, checklist de entrega.',\n  '- relato: problema, reclamação de cliente, erro, atraso, risco, pedido de ajuda para resolver algo.',\n  '- pergunta: dúvida técnica, de processo ou sobre as automações.',\n  '- registro: só informa algo para ficar registrado (combinado, decisão, status), sem pedir resposta.',\n  '- conversa: cumprimento, brincadeira, agradecimento.',\n  '',\n  '2) SE FOR RELATÓRIO, ANALISE COMO O CEO COBRA (antes de escrever):',\n  '- O DONO do relatório é quem aparece no cabeçalho/assinatura (ex.: \"| REDACTED\"), não necessariamente quem postou. Fale com o dono.',\n  '- Funil: separe contato, resposta, reunião, proposta, fechamento e recebimento. Volume de ligações mostra atividade, não resultado. Para cada número, pergunte qual foi o desfecho (ex.: \"6 pediram informação\" -> quantos responderam, quantos viraram reunião?).',\n  '- Cada oportunidade/cliente citado precisa de: situação real, próximo passo, responsável e data. Aponte os que estão sem isso, pelo nome.',\n  '- Não confunda preparação com execução: \"lista preparada\" não é \"lista enviada\"; \"concordou\" não é \"fechado\"; \"agendado\" não é \"realizado\".',\n  '- Datas: compare as datas do relatório com HOJE. Se algo estava marcado para uma data que já passou (\"amanhã 10h\"), cobre o resultado. Se o relatório é de dias atrás, diga isso.',\n  '- Bloqueios: identifique o que está travado, a dependência concreta e quem destrava.',\n  '- Não peça para refazer o que já foi feito; peça evidência no registro existente (ex.: RD Station, Gestta, Onvio) e evite duplicidade com outros setores.',\n  '- Nota: comece em 7. Suba só com resultado comprovado (reunião realizada, proposta, fechamento, problema resolvido). Desça para cada oportunidade sem desfecho/dono/data, número sem conclusão ou data vencida sem resultado. 9-10 é raro.',\n  '- Se houver AVALIAÇÕES ANTERIORES da pessoa, compare: elogie o que melhorou e cobre (com gentileza) o que se repetiu.',\n  '',\n  '3) ESCREVA o campo \"resposta\" pronto para publicar:',\n  '- relatorio: formato (cada \\\\n é quebra de linha): \"Oi, {primeiro nome do dono}! Avaliei o relatório *{título} — {data do relatório}*.\\\\n*Nota: X/10* — {1 frase justificando a nota}\\\\n\\\\n✅ *Pontos fortes*\\\\n• 2-3 itens específicos com número/nome\\\\n\\\\n⚠️ *Pontos de atenção*\\\\n• NO MÍNIMO 2, citando o trecho e o porquê\\\\n\\\\n❓ *O que preciso ver no próximo retorno*\\\\n• 2-4 perguntas objetivas de gestor (desfechos, evidências, datas)\\\\n\\\\n📌 *Próximos passos*\\\\n• 3-4 ações: {ação concreta} — {responsável, normalmente o dono} — {dd/mm}\\\\n\\\\n{1 frase final motivadora e específica}\". Máx. 2.500 caracteres. Preencha também nota, pontos_fortes, riscos e melhorias (um item por linha, sem formatação).',\n  '- relato: 1 linha reconhecendo o problema; o que fazer AGORA (passos numerados); QUEM resolve (setor/pessoa) e ATÉ QUANDO; onde registrar; o que avisar ao cliente. Se houver REGISTROS sobre o mesmo cliente/caso, use-os. Máx. 1.200 caracteres.',\n  '- pergunta: responda direto e diga a fonte (POP, nota do cofre, registro, status do n8n, legislação). Sem base: \"não tenho registro disso — confirme com {setor}\". Máx. 1.200 caracteres.',\n  '- registro: \"resposta\" vazia; no campo \"registro\" escreva o fato em 1-2 linhas (quem, o quê, quando, com o nome do cliente se houver).',\n  '- conversa: resposta curta e simpática dizendo em 1 linha o que você faz (avalia relatórios, orienta problemas, responde dúvidas, registra combinados, olha as automações).',\n  '\"titulo\": assunto em 3-6 palavras. \"setor\": Contábil, Fiscal, DP, Legalização, Sucesso do Cliente, Comercial, Financeiro, TI ou Geral. \"nota\": 0 se não for relatório.',\n  '',\n  '4) REGRAS',\n  '- NUNCA escreva \"vou verificar\", \"vou ver\", \"te retorno\", \"aguarde\": você não volta depois. Responda com o que sabe ou diga quem confirma.',\n  '- Nunca invente números, datas, prazos legais, alíquotas ou artigos de lei. Sem certeza: \"vale conferir em {onde}\".',\n  '- Use o que está na mensagem, na conversa, nos registros, na nota do cofre e no status do n8n abaixo. Cite a fonte.',\n  '- Automações: se houver STATUS DAS AUTOMAÇÕES abaixo, use-o para responder (ex.: por que a ATA não saiu): diga quando foi a última execução e o resultado. Se deu ERRO ou não rodou, diga que o Redacted (TI) precisa verificar. Nunca invente a causa técnica.',\n  '- REDACTED, Redacted e Redacted são frentes separadas: não misture (BPO financeiro de cliente pode ser Redacted; marque quando for).',\n  '- Você não executa ações (sistema, mensagem a cliente, pagamento): indique o responsável.',\n  '- Assunto de DP de funcionário da REDACTED (demissão, salário, saúde): não comente detalhes; oriente tratar com o DP no privado.',\n  '- Não repita CPF, CNPJ, salário ou dados bancários.',\n  '- Google Chat: *negrito* com UM asterisco, listas com \"•\", sem #, sem tabelas, sem **. Não comece com \"🤖\" nem \"Zezinho\".',\n  '',\n  'PREFERÊNCIAS DO GESTOR (correções anteriores do Redacted/CEO — SEMPRE seguir):', m.prefs || '(nenhuma ainda)',\n  '',\n  'CHECKLIST DO SETOR (' + m.nota_setor + '): ' + (CHECK[m.checklist] || CHECK.geral),\n  '',\n  (m.historico ? 'AVALIAÇÕES ANTERIORES DESTA PESSOA (para comparar a evolução):\\n' + m.historico + '\\n' : ''),\n  (m.memoria ? 'REGISTROS DA EMPRESA SOBRE OS MESMOS NOMES (use se ajudar e cite a data):\\n' + m.memoria + '\\n' : ''),\n  (m.exemplos ? 'EXEMPLOS DE AVALIAÇÕES JÁ APROVADAS PELO GESTOR (siga o nível de exigência e o estilo; não copie o conteúdo):\\n' + m.exemplos + '\\n' : ''),\n  (m.n8n_status ? 'STATUS DAS AUTOMAÇÕES (n8n):\\n' + m.n8n_status + '\\n' : ''),\n  'NOTA DO COFRE DA EMPRESA:', nota || '(não encontrada)'\n].join('\\n');\nlet anexos = [];\ntry { anexos = JSON.parse(m.anexos || '[]'); } catch (e) {}\nconst usuario = 'CANAL: ' + m.space_nome + '\\nQUEM POSTOU: ' + m.autor + '\\nPOSTADO EM: ' + DateTime.fromISO(String(m.data_msg)).setZone('America/Sao_Paulo').toFormat('dd/MM/yyyy HH:mm') + '\\n\\nCONVERSA ANTES (mesma thread):\\n' + m.conversa_antes + '\\n\\nMENSAGEM QUE TE MARCOU:\\n' + m.texto + (anexos.length ? '\\n\\nANEXOS (ainda não lidos nesta versão; se forem essenciais, peça o conteúdo no texto): ' + anexos.map(a => a.nome).join(', ') : '');\nconst body = { systemInstruction: { parts: [{ text: sistema }] }, contents: [{ role: 'user', parts: [{ text: usuario }] }], generationConfig: { responseMimeType: 'application/json', responseSchema: SCHEMA, temperature: 0.3, maxOutputTokens: 3000 } };\nreturn { json: { ...m, url: 'https://generativelanguage.googleapis.com/v1beta/models/' + m.modelo + ':generateContent', body } };"
+      }
+    },
+    {
+      "name": "Gemini (1 chamada)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $json.url }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googlePalmApi",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {
+          "timeout": 90000
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googlePalmApi"
+        }
+      }
+    },
+    {
+      "name": "Interpretar resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2240,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Lê o JSON do Gemini e calcula o custo (preços em US$ por 1M tokens; conferir na página do Google).\n// Se o Gemini falhou ou respondeu fora do formato, tipo = \"invalido\" e a menção volta para a fila.\n// \"meta\" só vale para CEO ou TI; da equipe vira \"registro\".\nconst PRECOS = { 'gemini-3.5-flash-lite': [0.30, 2.50], 'gemini-3.1-flash-lite': [0.25, 1.50], 'gemini-3.5-flash': [1.50, 9.00] };\nconst USD_BRL = 5.5;\nconst m = $('Montar pedido ao Gemini').item.json;\nconst r = $json;\nlet txt = '';\ntry { txt = r.candidates[0].content.parts.map(p => p.text || '').join(''); } catch (e) {}\nlet o = null;\ntry { o = JSON.parse(txt); } catch (e) { try { o = JSON.parse(txt.slice(txt.indexOf('{'), txt.lastIndexOf('}') + 1)); } catch (e2) {} }\nconst u = r.usageMetadata || {};\nconst tin = u.promptTokenCount || 0;\nconst tout = (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0);\nconst p = PRECOS[m.modelo] || PRECOS['gemini-3.5-flash-lite'];\nconst custo = Math.round(((tin * p[0] + tout * p[1]) / 1e6) * USD_BRL * 10000) / 10000;\nconst papel = m.papel || 'equipe';\nlet tipo = o && o.tipo ? o.tipo : 'invalido';\nif (tipo === 'meta' && papel !== 'ceo' && papel !== 'ti') tipo = 'registro';\nif (o && (tipo === 'registro' || tipo === 'meta') && !String(o.registro || '').trim()) tipo = 'invalido';\nif (o && tipo !== 'registro' && tipo !== 'meta' && !String(o.resposta || '').trim()) tipo = 'invalido';\no = o || {};\nconst erro = tipo !== 'invalido' ? '' : (r.error ? String(r.error.message || JSON.stringify(r.error)).slice(0, 300) : 'resposta do Gemini fora do formato');\nreturn { json: { id: m.id, message_id: m.message_id, space_id: m.space_id, space_nome: m.space_nome, thread_name: m.thread_name, autor: m.autor, papel, texto: m.texto, tentativas: Number(m.tentativas) || 0, modelo: m.modelo, tipo, titulo: o.titulo || (tipo === 'meta' ? 'Meta' : 'Menção'), setor: o.setor || 'Geral', nota: Number(o.nota) || 0, pontos_fortes: o.pontos_fortes || '', riscos: o.riscos || '', melhorias: o.melhorias || '', resposta: String(o.resposta || '').slice(0, 3500), registro: o.registro || '', tokens_entrada: tin, tokens_saida: tout, custo_brl: custo, dia: $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd'), erro } };"
+      }
+    },
+    {
+      "name": "Registrar consumo",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2464,
+        192
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dia": "={{ $json.dia }}",
+            "origem": "mencao",
+            "quem": "={{ $json.autor }}",
+            "tipo": "={{ $json.tipo }}",
+            "modelo": "={{ $json.modelo }}",
+            "tokens_entrada": "={{ $json.tokens_entrada }}",
+            "tokens_saida": "={{ $json.tokens_saida }}",
+            "custo_brl": "={{ $json.custo_brl }}",
+            "message_id": "={{ $json.message_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "dia",
+              "displayName": "dia",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "origem",
+              "displayName": "origem",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quem",
+              "displayName": "quem",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modelo",
+              "displayName": "modelo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_entrada",
+              "displayName": "tokens_entrada",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_saida",
+              "displayName": "tokens_saida",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "custo_brl",
+              "displayName": "custo_brl",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Por tipo",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        2688,
+        176
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "registro",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Interpretar resposta').item.json.tipo }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "regex"
+                    },
+                    "rightValue": "^(registro|meta)$"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "invalido",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $('Interpretar resposta').item.json.tipo }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "invalido"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Responder"
+        }
+      }
+    },
+    {
+      "name": "Reagir com ✅",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2912,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ 'https://chat.googleapis.com/v1/' + $('Interpretar resposta').item.json.message_id + '/reactions' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "{\"emoji\":{\"unicode\":\"✅\"}}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Guardar registro na base",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3136,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "setor": "={{ (($('Interpretar resposta').item.json.papel === 'ceo' && $('Interpretar resposta').item.json.tipo === 'registro') || /privad|confidencial|s[oó] (pra|para) mim|n[aã]o divulg/i.test($('Interpretar resposta').item.json.texto)) ? 'Restrito (CEO)' : $('Interpretar resposta').item.json.setor }}",
+            "categoria": "={{ $('Interpretar resposta').item.json.tipo === 'meta' ? 'meta' : 'registro' }}",
+            "titulo": "={{ $('Interpretar resposta').item.json.titulo }}",
+            "descricao": "={{ $('Interpretar resposta').item.json.registro + ' (' + $('Interpretar resposta').item.json.autor + ', ' + $('Interpretar resposta').item.json.space_nome + ')' }}",
+            "fonte_message_id": "={{ $('Interpretar resposta').item.json.message_id }}",
+            "data_info": "={{ $now.toISO() }}",
+            "atualizado_em": "={{ $now.toISO() }}",
+            "ativo": true
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "categoria",
+              "displayName": "categoria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "descricao",
+              "displayName": "descricao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fonte_message_id",
+              "displayName": "fonte_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data_info",
+              "displayName": "data_info",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ativo",
+              "displayName": "ativo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Menção registrada",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3360,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Interpretar resposta').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "feita",
+            "tipo": "={{ $('Interpretar resposta').item.json.tipo }}",
+            "resultado": "={{ $('Interpretar resposta').item.json.registro }}",
+            "atualizado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resultado",
+              "displayName": "resultado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Falhou: voltar para a fila",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2912,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Gemini falhou (ex.: \"high demand\") ou respondeu fora do formato: a menção volta para a fila.\n// Depois de 3 tentativas fica como \"erro\" e o Redacted é avisado. Nada é perdido nem enviado 2x.\nconst m = $('Interpretar resposta').item.json;\nreturn { json: { id: m.id, autor: m.autor, space_nome: m.space_nome, texto: m.texto, tentativas: m.tentativas, status: m.tentativas >= 3 ? 'erro' : 'fila', motivo: m.erro || 'falha' } };"
+      }
+    },
+    {
+      "name": "Atualizar menção com falha",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3136,
+        192
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "={{ $json.status }}",
+            "resultado": "={{ $json.motivo }}",
+            "atualizado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resultado",
+              "displayName": "resultado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Desistiu (3 tentativas)?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3360,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Falhou: voltar para a fila').item.json.status }}",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              },
+              "rightValue": "erro"
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Avisar Redacted no privado",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        3584,
+        192
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "mode": "each",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "titulo": "⚠️ Zezinho não conseguiu responder uma menção",
+            "conteudo": "={{ 'Depois de 3 tentativas, desisti da menção de ' + $('Falhou: voltar para a fila').item.json.autor + ' em ' + $('Falhou: voltar para a fila').item.json.space_nome + ': ' + String($('Falhou: voltar para a fila').item.json.texto).slice(0, 200) + ' | Motivo: ' + $('Falhou: voltar para a fila').item.json.motivo + '. Está na tabela Zezinho - Menções com status erro.' }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "conteudo",
+              "displayName": "conteudo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "name": "Enviar para aprovação (Redacted + CEO)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2912,
+        384
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "mode": "each",
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_id": "={{ $('Interpretar resposta').item.json.message_id }}",
+            "space_id": "={{ $('Interpretar resposta').item.json.space_id }}",
+            "space_nome": "={{ $('Interpretar resposta').item.json.space_nome }}",
+            "thread_name": "={{ $('Interpretar resposta').item.json.thread_name }}",
+            "autor": "={{ $('Interpretar resposta').item.json.autor }}",
+            "setor": "={{ $('Interpretar resposta').item.json.setor }}",
+            "tipo": "={{ $('Interpretar resposta').item.json.tipo === 'relatorio' ? 'avaliacao_relatorio' : 'resposta' }}",
+            "titulo_relatorio": "={{ $('Interpretar resposta').item.json.titulo }}",
+            "nota": "={{ $('Interpretar resposta').item.json.nota }}",
+            "pontos_fortes": "={{ $('Interpretar resposta').item.json.pontos_fortes }}",
+            "riscos": "={{ $('Interpretar resposta').item.json.riscos }}",
+            "melhorias": "={{ $('Interpretar resposta').item.json.melhorias }}",
+            "contexto": "={{ '[' + $('Interpretar resposta').item.json.tipo + ($('Interpretar resposta').item.json.papel === 'ceo' ? '|ceo' : '') + '] ' + $('Interpretar resposta').item.json.autor + ': ' + String($('Interpretar resposta').item.json.texto).slice(0, 300) }}",
+            "resposta": "={{ $('Interpretar resposta').item.json.resposta }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_id",
+              "displayName": "space_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_nome",
+              "displayName": "space_nome",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_name",
+              "displayName": "thread_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "autor",
+              "displayName": "autor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "titulo_relatorio",
+              "displayName": "titulo_relatorio",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nota",
+              "displayName": "nota",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pontos_fortes",
+              "displayName": "pontos_fortes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "riscos",
+              "displayName": "riscos",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "melhorias",
+              "displayName": "melhorias",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contexto",
+              "displayName": "contexto",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resposta",
+              "displayName": "resposta",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "name": "Menção enviada para aprovação",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        3136,
+        384
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Interpretar resposta').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "aprovacao",
+            "tipo": "={{ $('Interpretar resposta').item.json.tipo }}",
+            "resultado": "={{ String($('Interpretar resposta').item.json.resposta).slice(0, 500) }}",
+            "atualizado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resultado",
+              "displayName": "resultado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Teto do dia: mandar para a fila",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        384
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "fila",
+            "resultado": "teto diário atingido",
+            "atualizado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resultado",
+              "displayName": "resultado",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Fluxos de negócio",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        600,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Automações que o Zezinho acompanha (id do n8n e nome amigável). Acrescente aqui quando criar uma nova.\nconst FLUXOS = [\n  ['sXf86sWCWAIoXSc2', 'Zoom → ATA'],\n  ['ek3jBGS2T1n17Kr5', 'Autentique → ATA assinada'],\n  ['Gmg842aTaj5nzBY7', 'Resumo diário dos chats'],\n  ['0crmrRC6ZDFSvkoS', 'Aprovação das respostas do Zezinho'],\n  ['mzuQpaZ7PSGfU8DB', 'Zezinho: responder menções'],\n  ['iDU5RmC5IkTKs8Dj', 'Abertura de Empresas: gerar contrato'],\n  ['aygN6bOmhnLblszC', 'Cartão Redacted Redacted Caixa (Omie)'],\n  ['bd6cot6MpNovWKkz', 'Cartão Redacted Redacted Sicredi (Omie)'],\n  ['0CQc4bAzQukc8rXC', 'Cartão Redacted (Conta Azul)'],\n  ['hXv7DXshDPjcaGXX', 'Cartão clientes Conta Azul Mais'],\n  ['Jf5DHdBDOvq5KDpN', 'Portal de faturas da Redacted'],\n];\nreturn FLUXOS.map(f => ({ json: { id: f[0], nome: f[1] } }));"
+      }
+    },
+    {
+      "name": "n8n - últimas execuções",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        820,
+        560
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ '<N8N_HOST_URL>' + $json.id + '&limit=3' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "n8nApi"
+        }
+      }
+    },
+    {
+      "name": "Resumo do n8n",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1040,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Resume, SEM IA, a situação de cada automação (última execução e erros recentes).\nconst fl = $('Fluxos de negócio').all().map(i => i.json);\nconst r = $input.all().map(i => i.json);\nconst fmt = iso => iso ? DateTime.fromISO(String(iso)).setZone('America/Sao_Paulo').toFormat('dd/MM HH:mm') : '?';\nconst ST = { success: 'deu certo', error: 'ERRO', crashed: 'ERRO (travou)', running: 'rodando', waiting: 'aguardando (ex.: aprovação)', canceled: 'cancelada' };\nconst linhas = fl.map((f, i) => {\n  const ex = (r[i] && r[i].data) || [];\n  if (!ex.length) return '• ' + f.nome + ': nenhuma execução recente';\n  const u = ex[0];\n  const erros = ex.filter(e => e.status === 'error' || e.status === 'crashed').length;\n  return '• ' + f.nome + ': última em ' + fmt(u.startedAt) + ' — ' + (ST[u.status] || u.status) + (erros ? ' (' + erros + ' erro(s) nas últimas ' + ex.length + ')' : '');\n});\nreturn [{ json: { texto: 'Consultado agora no n8n (' + fmt(new Date().toISOString()) + '):\\n' + linhas.join('\\n') } }];"
+      }
+    },
+    {
+      "name": "Avaliações recentes",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1260,
+        560
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "tipo",
+              "condition": "eq",
+              "keyValue": "avaliacao_relatorio"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 40,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      }
+    },
+    {
+      "name": "Base de conhecimento recente",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1480,
+        560
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "ativo",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 150,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      }
+    },
+    {
+      "name": "Ajustar pedido (papel e metas)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// Acrescenta ao pacote: quem postou (CEO / TI / equipe), o tipo 'meta' e a regra de privacidade. Não muda o número de chamadas ao Gemini.\nconst j = $json;\nconst papel = j.papel || 'equipe';\nconst NOME = { ceo: 'CEO (Redacted Redacted, dono da empresa)', ti: 'TI (Redacted, responsável pelo Zezinho)', equipe: 'equipe' };\nconst extra = [\n  '',\n  '5) PAPEL DE QUEM POSTOU: ' + NOME[papel] + '.',\n  '- META (só se o papel for CEO ou TI): se a mensagem define ou muda uma meta (objetivo com número, indicador e período para um setor ou pessoa, ex.: \"meta: 3 reuniões por semana no Comercial\"), use tipo \"meta\". No campo \"registro\" escreva a meta em 1 linha: SETOR — indicador — número — período — desde quando (ex.: \"Comercial — reuniões realizadas — 3 por semana — a partir de 26/10\"). \"resposta\" vazia. Se faltar número ou período, use tipo \"pergunta\" e peça o que falta.',\n  '- Se o papel for EQUIPE, nunca use \"meta\": use \"registro\".',\n  '- Se o papel for CEO e ele pedir análise, opinião ou sugestão: responda como o gestor reportando ao dono. Direto, com números e fatos do contexto, riscos, e 2-3 sugestões concretas (ação — quem — quando). Aqui PODE recomendar ao CEO. Sem base: diga o que falta e onde buscar.',\n  '',\n  '6) PRIVACIDADE (REGRA MÁXIMA)' + (papel === 'equipe' ? ' — quem postou é da EQUIPE:' : ':'),\n  '- Nunca revele a alguém da equipe: o que o CEO disse, pediu ou registrou em particular; conversas privadas; conteúdo de espaços restritos (DP, Financeiro Interno); salários, desempenho individual de outra pessoa, decisões ainda não anunciadas, custos e contratos da REDACTED.',\n  '- Se a pergunta tocar nisso, responda só o que já é público no próprio canal e diga \"isso precisa ser tratado com o seu gestor\". Não diga que existe informação restrita.',\n  '- Elogio ou cobrança de uma pessoa só sobre o que ELA mesma postou.'\n].join('\\n');\nj.body.systemInstruction.parts[0].text += extra;\nconst en = j.body.generationConfig.responseSchema.properties.tipo.enum;\nif (!en.includes('meta')) en.push('meta');\nj.body.contents[0].parts[0].text = 'PAPEL: ' + papel.toUpperCase() + '\\n' + j.body.contents[0].parts[0].text;\nreturn { json: j };"
+      }
+    },
+    {
+      "name": "YouTube - vídeos do canal",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1700,
+        560
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/youtube/v3/playlistItems",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "youTubeOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "part",
+              "value": "snippet"
+            },
+            {
+              "name": "playlistId",
+              "value": "UUA5ZUnPcrWedXr9N15CKbDA"
+            },
+            {
+              "name": "maxResults",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "pagination": {
+            "pagination": {
+              "paginationMode": "updateAParameterInEachRequest",
+              "parameters": {
+                "parameters": [
+                  {
+                    "type": "qs",
+                    "name": "pageToken",
+                    "value": "={{ $response.body.nextPageToken }}"
+                  }
+                ]
+              },
+              "paginationCompleteWhen": "other",
+              "completeExpression": "={{ !$response.body.nextPageToken }}",
+              "limitPagesFetched": true,
+              "maxRequests": 4
+            }
+          }
+        }
+      },
+      "credentials": {
+        "youTubeOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "youTubeOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Pedido de ATA? (sem IA)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1904,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// SEM IA: se a menção pede ATA, pasta, gravação ou vídeo de reunião, monta a busca no Drive.\n// As ATAs ficam no drive \"Pastas\" com nome \"AAAA-MM-DD HHhMM-HHhMM — título\"; o nome do cliente está no conteúdo.\n// Com data: busca todas as reuniões do dia (os termos só ordenam). Sem data: busca os termos no conteúdo.\nconst j = $json;\nconst texto = String(j.texto || '').replace(/@[^\\n]*?Contabilidade/gi, ' ');\nconst PEDE = /\\bata\\b|\\batas\\b|grava[cç][aã]o|grava[cç][oõ]es|v[ií]deo|youtube|\\byt\\b|transcri[cç]/i;\nconst NADA = \"name = '__nenhum__' and trashed = false\";\nif (!PEDE.test(texto)) return { json: { ...j, ata: { ativo: false, q: NADA, termos: [], data: '' } } };\nconst hoje = $now.setZone('America/Sao_Paulo');\nlet data = '';\nlet d = texto.match(/\\b(\\d{4})-(\\d{2})-(\\d{2})\\b/);\nif (d) data = d[0];\nelse if ((d = texto.match(/\\b(\\d{1,2})\\/(\\d{1,2})(?:\\/(\\d{2,4}))?\\b/))) {\n  const dia = Number(d[1]), mes = Number(d[2]);\n  let ano = d[3] ? Number(d[3].length === 2 ? '20' + d[3] : d[3]) : hoje.year;\n  if (!d[3] && (mes > hoje.month || (mes === hoje.month && dia > hoje.day))) ano -= 1;\n  if (mes >= 1 && mes <= 12 && dia >= 1 && dia <= 31) data = ano + '-' + String(mes).padStart(2, '0') + '-' + String(dia).padStart(2, '0');\n}\nconst limpa = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\nconst PARE = new Set(('zezinho Redacted contabilidade Redacted ata atas manda mande mandar me envia envie enviar passa passe passar busca busque buscar procura procure procurar acha ache achar encontra encontre encontrar localiza localize traz traga trazer mostra mostre mostrar preciso precisa precisava quero queria pode poderia consegue favor por para pra pro link links pasta pastas video videos youtube gravacao gravacoes gravada reuniao reunioes transcricao cliente clientes oi ola bom boa dia tarde noite qual quais onde aquela aquele essa esse isso esta este dela dele com sobre das dos uma uns umas que quando ontem hoje semana passada ultima ultimo mes obrigado obrigada sim nao tem ter ver tambem mais aqui gente nossa nosso sua seu minha meu teve feita fizemos foi segunda terca quarta quinta sexta sabado domingo janeiro fevereiro marco abril maio junho julho agosto setembro outubro novembro dezembro').split(' '));\nconst palavras = texto.match(/[A-Za-zÀ-ÿ]{3,}/g) || [];\nconst maius = palavras.filter(w => /^[A-ZÀ-Ý]/.test(w) && !PARE.has(limpa(w)));\nconst minus = palavras.filter(w => w.length >= 5 && !PARE.has(limpa(w)));\nconst termos = [...new Set((maius.length ? maius : minus).map(w => w.toLowerCase()))].slice(0, 3);\nconst esc = s => s.replace(/\\\\/g, '\\\\\\\\').replace(/'/g, \"\\\\'\");\nconst partes = ['trashed = false', \"(mimeType = 'application/vnd.google-apps.document' or mimeType = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document')\"];\nif (data) partes.push(\"name contains '\" + data + \"'\");\nelse termos.forEach(t => partes.push(\"fullText contains '\" + esc(t) + \"'\"));\nreturn { json: { ...j, ata: { ativo: true, q: (termos.length || data) ? partes.join(' and ') : NADA, termos, data } } };"
+      }
+    },
+    {
+      "name": "Drive - buscar ATAs",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        560
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.ata.q }}"
+            },
+            {
+              "name": "corpora",
+              "value": "drive"
+            },
+            {
+              "name": "driveId",
+              "value": "0AJW7LEhIfbLDUk9PVA"
+            },
+            {
+              "name": "includeItemsFromAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,parents,webViewLink,mimeType)"
+            },
+            {
+              "name": "pageSize",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Juntar ATAs no pedido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2128,
+        560
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// SEM IA: coloca no pacote do Gemini as reuniões achadas no Drive + o vídeo no YouTube (achado pelo título = nome da pasta).\n// Com data, as reuniões do dia cujo título tem os termos (ex.: \"comercial\") vêm primeiro.\n// Se algo falhar aqui, o pedido segue sem o bloco (a menção nunca trava por causa da busca).\nconst j = $('Pedido de ATA? (sem IA)').item.json;\nif (!j.ata || !j.ata.ativo) return { json: j };\ntry {\n  const NOME_ATA = /^(\\d{4}-\\d{2}-\\d{2} \\d{2}h\\d{2})/;\n  const DOC = 'application/vnd.google-apps.document';\n  const limpa = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\n  const termos = (j.ata.termos || []).map(limpa);\n  const pontos = nome => termos.filter(t => limpa(nome).includes(t)).length;\n  const porPasta = {};\n  ($json.files || []).filter(f => NOME_ATA.test(f.name || '')).forEach(f => {\n    const p = (f.parents || [])[0];\n    if (p && (!porPasta[p] || f.mimeType === DOC)) porPasta[p] = f;\n  });\n  const videos = $('YouTube - vídeos do canal').all().flatMap(i => i.json.items || [])\n    .map(v => ({ titulo: (v.snippet || {}).title || '', id: ((v.snippet || {}).resourceId || {}).videoId }));\n  const lista = Object.entries(porPasta).map(([pasta, f]) => ({ pasta, f }))\n    .sort((a, b) => (pontos(b.f.name) - pontos(a.f.name)) || b.f.name.localeCompare(a.f.name)).slice(0, 5);\n  const linhas = lista.map((x, i) => {\n    const nome = x.f.name.replace(/\\.docx$/i, '');\n    const v = videos.find(v => v.titulo.startsWith(nome.match(NOME_ATA)[1]));\n    return (i + 1) + '. ' + nome + '\\n   Pasta: <GOOGLE_URL>' + x.pasta + '\\n   ATA: ' + (x.f.webViewLink || '(sem link)') + '\\n   Vídeo: ' + (v ? 'https://youtu.be/' + v.id + ' (PRIVADO)' : 'não encontrado no YouTube');\n  });\n  const busca = 'termos: ' + (j.ata.termos.join(', ') || '—') + (j.ata.data ? ' | data: ' + j.ata.data : '');\n  j.body.systemInstruction.parts[0].text += [\n    '',\n    '7) PEDIDO DE ATA / GRAVAÇÃO — busca automática no Drive, sem IA (' + busca + '):',\n    linhas.length ? linhas.join('\\n') : '(nenhuma reunião encontrada)',\n    '- Se a mensagem pede ATA, pasta, gravação ou vídeo de reunião: tipo \"pergunta\". Responda curto e simpático com os links ACIMA no formato do Google Chat <URL|texto> (ex.: <https://...|📁 Pasta da ATA>, <https://...|📄 ATA>, <https://...|🎥 Vídeo>). Diga a data e o título da reunião.',\n    '- Se uma reunião da lista bate com o que foi pedido (título/assunto), mande só ela. Se houver dúvida, liste até 5 (data + título) com os links e pergunte qual é.',\n    '- Nunca invente link: use só os de cima.',\n    '- O vídeo no YouTube é PRIVADO: avise que só abre para quem tem acesso ao canal; para mandar a um cliente, o Redacted (TI) libera como não listado só aquele vídeo.',\n    '- Se nada foi encontrado: diga que não achou reunião gravada com esses dados e peça o nome do cliente e a data da reunião (dd/mm). Não diga que vai verificar de novo.',\n    '- Não resuma o conteúdo da reunião: você não leu a ATA.'\n  ].join('\\n');\n} catch (e) {}\nreturn { json: j };"
+      }
+    },
+    {
+      "name": "É provão?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2200,
+        600
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Interpretar resposta').item.json.space_id === 'provao' }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Provão: gravar resposta",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2420,
+        760
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ Number(String($('Interpretar resposta').item.json.message_id).replace('provao-', '')) }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "resposta_zezinho": "={{ '[' + $('Interpretar resposta').item.json.tipo + '] ' + ($('Interpretar resposta').item.json.resposta || $('Interpretar resposta').item.json.registro || $('Interpretar resposta').item.json.erro) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "resposta_zezinho",
+              "displayName": "resposta_zezinho",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Provão: menção concluída",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2640,
+        760
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Interpretar resposta').item.json.id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "provao_ok",
+            "tipo": "={{ $('Interpretar resposta').item.json.tipo }}",
+            "atualizado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Termos para o histórico (sem IA)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1900,
+        900
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// SEM IA: tira até 3 termos da menção para buscar no histórico escrito (resumos de chat, ATAs, transcrições).\n// 1º termos fortes: códigos de empresa (603), normas (NT 07/2026), palavras como eSocial, siglas (BNI, ILB), nomes próprios.\n// Se tiver menos de 2 fortes, completa com SUBSTANTIVOS de conteúdo (ex.: planilha, levantamento, pendências); verbos ficam de fora\n// porque no chat costumam estar escritos de outro jeito (\"concluir\" × \"concluírem\").\n// A busca exige TODOS os termos juntos (e, se não achar, tenta com qualquer um).\nconst j = $json;\nconst texto = String(j.texto || '').replace(/@[^\\n]*?Contabilidade/gi, ' ');\nconst limpa = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();\nconst VAZIAS = new Set(('zezinho Redacted contabilidade Redacted ceo qual quais como onde quando quem porque pelo pela pelos pelas para pra com sobre das dos uma umas uns que esta este essa esse isso aquela aquele dela dele foi era sao ser tem ter teve vai deu dar pode poderia preciso precisa quero queria favor obrigado obrigada bom boa dia tarde noite hoje ontem amanha semana mes ano data prazo regra todos todas fazer feito definido definida informado informada segunda terca quarta quinta sexta sabado domingo janeiro fevereiro marco abril maio junho julho agosto setembro outubro novembro dezembro partir qual era seria estava ficou foram').split(' '));\nconst SETOR = new Set('comercial fiscal contabil societario legalizacao geral operacional radar responsavel equipe setor setores empresa empresas cliente clientes'.split(' '));\nconst VERBO = /(rem|ram|ndo|ados|adas|ido|ida|ar|er|ir|ou|aram|eram|iram)$/i;\nconst fortes = [];\nconst ja = t => fortes.some(x => limpa(x) === limpa(t));\nconst addForte = t => { t = String(t).trim(); if (t && !VAZIAS.has(limpa(t)) && !SETOR.has(limpa(t)) && !ja(t)) fortes.push(t); };\n(texto.match(/\\b(?:NT|IN|PEC|Lei|Portaria|Edital)\\s*n?[º°]?\\s*\\d+[\\/\\d.]*/gi) || []).forEach(addForte);\n(texto.match(/\\b\\d{3,4}\\b/g) || []).filter(n => !/^20\\d\\d$/.test(n) && !fortes.some(f => f.includes(n))).forEach(addForte);\n(texto.match(/\\b[a-z]+[A-Z][A-Za-z]+\\b/g) || []).forEach(addForte);\n(texto.match(/\\b[A-Z]{2,}[A-Za-z0-9-]*\\b/g) || []).filter(s => s.length >= 3).forEach(addForte);\nconst palavras = texto.match(/[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ-]{2,}/g) || [];\npalavras.forEach((w, i) => { if (i > 0 && /^[A-ZÀ-Ý][a-zà-ÿ]/.test(w)) addForte(w); });\n// 28/10: nome logo depois de \"empresa/cliente/caso\", mesmo em minúscula (\"empresa ypiranga\").\n(texto.match(/\\b(?:empresa|cliente|caso)\\s+(?:d[aoe]\\s+)?[A-Za-zÀ-ÿ][A-Za-zÀ-ÿ0-9-]{3,}/gi) || []).forEach(m => { const w = m.split(/\\s+/).pop(); if (!VAZIAS.has(limpa(w)) && !SETOR.has(limpa(w)) && !ja(w)) fortes.unshift(w); });\nconst termos = fortes.slice(0, 3);\nif (termos.length < 2) {\n  const conteudo = [...new Set(palavras.filter(w => w.length >= 6 && !VAZIAS.has(limpa(w)) && !VERBO.test(limpa(w)) && !termos.some(t => limpa(t) === limpa(w))))]\n    .sort((a, b) => b.length - a.length);\n  for (const w of conteudo) { if (termos.length >= 3) break; termos.push(w); }\n}\n// 28/10: variações de grafia para a busca com QUALQUER termo (Redacted → Redacted, Luis → Luiz). Nomes longos primeiro; máx. 4.\nconst variantes = [];\nconst addV = v => { if (v && variantes.length < 4 && !variantes.some(x => limpa(x) === limpa(v))) variantes.push(v); };\n[...termos].sort((a, b) => b.length - a.length).forEach(v => { addV(v); addV(v.replace(/([a-zà-ÿ])\\1/gi, '$1')); addV(v.replace(/s$/i, 'z')); addV(v.replace(/z$/i, 's')); });\nreturn { json: { ...j, hist_termos: termos.join(', '), hist_variantes: variantes.join(', ') } };"
+      }
+    },
+    {
+      "name": "Buscar no histórico",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2120,
+        900
+      ],
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "termos": "={{ String($json.hist_termos || '').split(', ').filter(Boolean).join(' & ') }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "termos",
+              "displayName": "termos",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "name": "Juntar histórico no pedido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2340,
+        900
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// SEM IA: coloca no pacote do Gemini os trechos do histórico escrito. Se a busca falhar, segue sem o bloco.\n// 27/10 TRAVA SEM IA (equipe): só trechos dos resumos dos grupos (\"Chats REDACTED\"), sem assunto sensível.\n// 28/10: corta só a FRASE sensível, não o trecho inteiro (antes um \"honorário\" escondia o caso todo do cliente).\n// 28/10 (Redacted): a equipe também vê ATAs de reunião (\"AAAA-MM-DD HHhMM-... — Título\"), MENOS as de título privado\n// (financeiro, agente/Zezinho/IA, sócios, diretoria, CEO). Transcrições brutas continuam só para CEO e TI.\n// 28/10 (provão 2): + pagamento atrasado/difícil, não pagou, devendo, acordo de pagamento, renegociação, alinhamento contratual.\nconst j = $('Termos para o histórico (sem IA)').item.json;\nconst SENSIVEL = /deslig|demiss|demiti|rescis|sal[aá]ri|f[eé]rias|atestado|advert[eê]ncia|inadimpl|distrato|d[ií]vida|banc[aá]ri|\\bita[uú]\\b|rentabil|cortes? de custo|honor[aá]rio|pr[oó]-?labore|contrato de trabalho|pagamentos? (em atraso|atrasad|dif[ií]c)|n[aã]o (pagou|pagaram|est[aá] pagando)|devend[oa]|acordo de pagamento|tentativa de acordo|renegocia|alinhamento contratual/i;\nconst ATA_PRIVADA = /financeir|agente|zezinho|intelig[eê]ncia artificial|\\bIA\\b|s[oó]cios?|diretoria|\\bCEO\\b|privad|gestor/i;\nconst liberado = b => {\n  const nome = (b.match(/^\\s*=====\\s*(.+?)\\s*\\(\\d{4}-\\d{2}-\\d{2}\\)\\s*=====/) || [])[1] || '';\n  if (/^Chats REDACTED/i.test(nome)) return true;\n  return /^\\d{4}-\\d{2}-\\d{2} \\d{2}h\\d{2}/.test(nome) && !/transcri/i.test(nome) && !ATA_PRIVADA.test(nome);\n};\ntry {\n  let res = String(($json || {}).resultado || '');\n  if ((j.papel || 'equipe') === 'equipe' && res) {\n    const blocos = res.split(/\\n(?=\\s*=====)/);\n    const cabecalho = blocos.shift();\n    const ok = blocos.filter(liberado)\n      .map(b => b.split('\\n').map(l => /^\\s*(=====|Link:|Termos encontrados)/.test(l) ? l : l.split(/(?<=[.!?:])\\s+/).filter(f => !SENSIVEL.test(f)).join(' ')).join('\\n'));\n    res = ok.length ? [cabecalho, ...ok].join('\\n') : '';\n  }\n  if (j.hist_termos && res && !/^Nada encontrado|^Informe pelo menos/.test(res)) {\n    j.body.systemInstruction.parts[0].text += [\n      '',\n      '8) HISTÓRICO ESCRITO DA EMPRESA — busca automática sem IA (termos: ' + j.hist_termos + '). São trechos de resumos de chat e ATAs de reunião' + ((j.papel || 'equipe') === 'equipe' ? '' : ' e transcrições') + ':',\n      res.slice(0, 14000),\n      '- Leia TODOS os trechos antes de responder. Se algum responde à pergunta, RESPONDA com o que está escrito (datas, nomes, números, percentuais) e diga de onde veio: \"chat de dd/mm\" para resumo de chat, \"ATA de dd/mm (título)\" só para documento de reunião.',\n      '- Se houver mais de um registro sobre o mesmo cliente, use o MAIS RECENTE como situação atual e diga a data. Só atribua uma orientação ao CEO se a mensagem for dele (Redacted Redacted).',\n      '- Só use trecho que trata do MESMO cliente/assunto da pergunta. Se nenhum trecho responde, diga que não achou registro escrito e quem pode saber.',\n      '- Nunca misture assuntos de documentos diferentes nem complete com suposição.'\n    ].join('\\n');\n  }\n} catch (e) {}\nreturn { json: j };"
+      }
+    },
+    {
+      "name": "Achou com todos os termos?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2230,
+        1000
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ !/^Nada encontrado|^Informe pelo menos/.test(String($json.resultado || 'Nada encontrado')) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Buscar no histórico (qualquer termo)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2340,
+        1100
+      ],
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "termos": "={{ $('Termos para o histórico (sem IA)').item.json.hist_variantes || $('Termos para o histórico (sem IA)').item.json.hist_termos }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "termos",
+              "displayName": "termos",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "name": "POPs oficiais (sem IA)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2016,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "// 27/10: as menções também conhecem os POPs oficiais (antes só o relatório das 17h via). Mesma chamada ao Gemini.\n// Fonte: checklist dos POPs v1.1 de 13/10/2026 (o mesmo do agente, references/checklist-setores.md). Atualizar os dois juntos.\nconst POPS = [\n  'Comercial: lead/oportunidade com próxima ação e data no RD no mesmo dia útil (POP-COM-001); lead fora do perfil com motivo registrado (COM-001); oportunidade achada por outro setor registrada e Comercial avisado (COM-002); proposta com follow-up e próxima ação, desconto fora da alçada só com aprovação do sócio (COM-003); venda fechada: handoff completo ao CS com promessas da venda e Financeiro avisado no mesmo dia útil, onboarding em até 2 dias úteis (COM-004); indicação BNI/parceiro com retorno em até 48h (COM-005).',\n  'Sucesso do Cliente: chamado/pedido com 1ª resposta no dia; parado mais de 2 dias → escalar ao coordenador do setor (POP-CS-001); detrator ou reclamação → contato em até 48h (CS-002); reunião com cliente: decisões com dono e prazo, ações no Gestta no mesmo dia (CS-003); cliente novo: boas-vindas em até 5 dias úteis do handoff; handoff incompleto devolvido ao Comercial no mesmo dia (CS-006); sinal de risco (atraso de pagamento, queda de documentos, reclamação, silêncio, pedido de cancelamento/distrato) → escuta em até 48h e plano em até 5 dias úteis, com dono (CS-007).',\n  'Fiscal: cliente sem documentos → status \"Aguardando cliente\" e nova cobrança em 48h (POP-FIS-001); DAS/PGDAS-D enviado ao cliente até 2 dias antes do vencimento (dia 20); \"transmitir com estimativa\" é PROIBIDO (FIS-002); obrigação/guia perto do vencimento precisa de confirmação de envio (FIS-004/005/006); débito novo ou parcelamento em risco → Ordem de Serviço no mesmo dia e proposta ao cliente (FIS-008); alerta do fisco classificado e com responsável (FIS-010).',\n  'Contábil: fechamento com conciliação bancária feita e sem transitória em aberto (POP-CON-001); documento faltando registrado como pendência no portal do cliente (CON-001); diferença ECD × ECF → não transmitir, levar ao coordenador (CON-002); ajuste fiscal sem documentação não é considerado (CON-005).',\n  'Legalização/Societário: exigência de órgão respondida em até 2 dias úteis e cliente avisado (POP-LEG-003); procuração vencida → renovação pedida ao cliente no mesmo dia (LEG-001); pendência de situação fiscal encaminhada ao Fiscal em até 2 dias úteis, com responsável (LEG-001).',\n  'Reuniões (todas): toda decisão com responsável e prazo; ação sem dono → quem conduziu assume até definir (POP-CS-003).'\n].join('\\n');\nconst j = $json;\nj.body.systemInstruction.parts[0].text += '\\n\\nPOPs OFICIAIS DA REDACTED (v1.1, 13/10/2026) — use para responder perguntas de prazo/processo e para cobrar relatórios; SEMPRE cite o código do POP (ex.: \"POP-FIS-002\"). Se o POP não cobre o caso, diga quem confirma:\\n' + POPS;\nreturn { json: j };"
+      }
+    }
+  ],
+  "connections": {
+    "A cada 5 min (2 min depois do vigia)": {
+      "main": [
+        [
+          {
+            "node": "Menções pendentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Menções pendentes": {
+      "main": [
+        [
+          {
+            "node": "Gasto de hoje",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Testar agora": {
+      "main": [
+        [
+          {
+            "node": "Menções pendentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gasto de hoje": {
+      "main": [
+        [
+          {
+            "node": "Preferências do gestor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decidir (teto e modelo)": {
+      "main": [
+        [
+          {
+            "node": "Dentro do teto?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dentro do teto?": {
+      "main": [
+        [
+          {
+            "node": "Marcar processando",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Teto do dia: mandar para a fila",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar processando": {
+      "main": [
+        [
+          {
+            "node": "Ler nota do setor (cofre)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler nota do setor (cofre)": {
+      "main": [
+        [
+          {
+            "node": "Montar pedido ao Gemini",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini (1 chamada)": {
+      "main": [
+        [
+          {
+            "node": "Interpretar resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar resposta": {
+      "main": [
+        [
+          {
+            "node": "Registrar consumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Por tipo": {
+      "main": [
+        [
+          {
+            "node": "Reagir com ✅",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Falhou: voltar para a fila",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Enviar para aprovação (Redacted + CEO)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reagir com ✅": {
+      "main": [
+        [
+          {
+            "node": "Guardar registro na base",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardar registro na base": {
+      "main": [
+        [
+          {
+            "node": "Menção registrada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Falhou: voltar para a fila": {
+      "main": [
+        [
+          {
+            "node": "Atualizar menção com falha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Atualizar menção com falha": {
+      "main": [
+        [
+          {
+            "node": "Desistiu (3 tentativas)?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Desistiu (3 tentativas)?": {
+      "main": [
+        [
+          {
+            "node": "Avisar Redacted no privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar para aprovação (Redacted + CEO)": {
+      "main": [
+        [
+          {
+            "node": "Menção enviada para aprovação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preferências do gestor": {
+      "main": [
+        [
+          {
+            "node": "Fluxos de negócio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fluxos de negócio": {
+      "main": [
+        [
+          {
+            "node": "n8n - últimas execuções",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n - últimas execuções": {
+      "main": [
+        [
+          {
+            "node": "Resumo do n8n",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumo do n8n": {
+      "main": [
+        [
+          {
+            "node": "Avaliações recentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avaliações recentes": {
+      "main": [
+        [
+          {
+            "node": "Base de conhecimento recente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar pedido ao Gemini": {
+      "main": [
+        [
+          {
+            "node": "Ajustar pedido (papel e metas)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Base de conhecimento recente": {
+      "main": [
+        [
+          {
+            "node": "YouTube - vídeos do canal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "YouTube - vídeos do canal": {
+      "main": [
+        [
+          {
+            "node": "Decidir (teto e modelo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pedido de ATA? (sem IA)": {
+      "main": [
+        [
+          {
+            "node": "Drive - buscar ATAs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - buscar ATAs": {
+      "main": [
+        [
+          {
+            "node": "Juntar ATAs no pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar consumo": {
+      "main": [
+        [
+          {
+            "node": "É provão?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É provão?": {
+      "main": [
+        [
+          {
+            "node": "Provão: gravar resposta",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Por tipo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Provão: gravar resposta": {
+      "main": [
+        [
+          {
+            "node": "Provão: menção concluída",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar ATAs no pedido": {
+      "main": [
+        [
+          {
+            "node": "Termos para o histórico (sem IA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Termos para o histórico (sem IA)": {
+      "main": [
+        [
+          {
+            "node": "Buscar no histórico",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar histórico no pedido": {
+      "main": [
+        [
+          {
+            "node": "Gemini (1 chamada)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar no histórico": {
+      "main": [
+        [
+          {
+            "node": "Achou com todos os termos?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achou com todos os termos?": {
+      "main": [
+        [
+          {
+            "node": "Juntar histórico no pedido",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Buscar no histórico (qualquer termo)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar no histórico (qualquer termo)": {
+      "main": [
+        [
+          {
+            "node": "Juntar histórico no pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ajustar pedido (papel e metas)": {
+      "main": [
+        [
+          {
+            "node": "POPs oficiais (sem IA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POPs oficiais (sem IA)": {
+      "main": [
+        [
+          {
+            "node": "Pedido de ATA? (sem IA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

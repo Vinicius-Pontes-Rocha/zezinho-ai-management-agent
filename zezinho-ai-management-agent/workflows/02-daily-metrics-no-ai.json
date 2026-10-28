@@ -1,0 +1,332 @@
+{
+  "name": "02-daily-metrics-no-ai",
+  "nodes": [
+    {
+      "name": "Seg-sex 18h05",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "5 18 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Quantos resumos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Agendado = só o resumo mais recente; manual = os últimos 10.\nlet manual = false;\ntry { manual = $('Recalcular últimos 10 dias').isExecuted; } catch (e) {}\nreturn [{ json: { n: manual ? 10 : 1 } }];"
+      }
+    },
+    {
+      "name": "Recalcular últimos 10 dias",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Dias já contados",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Drive - resumos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "'<ID>' in parents and name contains 'Chats REDACTED' and trashed = false"
+            },
+            {
+              "name": "orderBy",
+              "value": "createdTime desc"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            },
+            {
+              "name": "pageSize",
+              "value": "={{ $('Quantos resumos').first().json.n }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Resumos a processar",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Pula os dias que já estão na tabela.\nconst feitos = new Set($('Dias já contados').all().map(i => i.json.dia).filter(Boolean));\nreturn ($input.first().json.files || [])\n  .map(f => ({ ...f, dia: (String(f.name).match(/\\d{4}-\\d{2}-\\d{2}/) || [''])[0] }))\n  .filter(f => f.dia && !feitos.has(f.dia))\n  .map(f => ({ json: f }));"
+      }
+    },
+    {
+      "name": "Drive - ler resumo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://www.googleapis.com/drive/v3/files/\" + $json.id + \"/export?mimeType=text/plain\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "conteudo"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Contar por pessoa e espaço",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// SEM IA: lê as linhas \"[HH:MM] Nome - Cargo: texto\" de cada espaço do resumo.\n// \"relatórios\" = mensagem que começa com relatório / alinhamento / fechamento / resumo / radar, ou com cabeçalho \"SETOR | Nome\" (ex.: \"🔵 CS | Redacted, 22/10\").\n// Ignora o espaço de teste e as mensagens automáticas da conta Redacted Contabilidade.\n// 28/10: o fechamento chega depois do corte (18h), então cai no resumo do dia seguinte. O relatório conta no dia A QUE SE REFERE:\n// data dd/mm no início da mensagem; sem data e enviado a partir das 18h → dia útil anterior ao do resumo.\nconst arquivos = $('Resumos a processar').all().map(i => i.json);\nconst RELATORIO = /relat[óo]rio|alinhamento|fechamento|resumo d|radar|^\\W*[A-ZÀ-Ý][A-ZÀ-Ý&\\s]{1,30}\\|/i;\nconst fmt = d => d.toISOString().slice(0, 10);\nconst diaUtilAnterior = dia => { const d = new Date(dia + 'T12:00:00Z'); do { d.setUTCDate(d.getUTCDate() - 1); } while ([0, 6].includes(d.getUTCDay())); return fmt(d); };\nconst diaRef = (dia, hh, txt) => {\n  const m = String(txt).slice(0, 80).match(/\\b(\\d{1,2})\\/(\\d{1,2})\\b/);\n  if (m) {\n    const ref = dia.slice(0, 4) + '-' + m[2].padStart(2, '0') + '-' + m[1].padStart(2, '0');\n    if (ref <= dia && ref >= diaUtilAnterior(diaUtilAnterior(dia))) return ref;\n  }\n  return Number(hh) >= 18 ? diaUtilAnterior(dia) : dia;\n};\nconst out = [];\n$input.all().forEach((it, i) => {\n  const dia = (arquivos[i] || {}).dia;\n  if (!dia) return;\n  const cont = {};\n  const add = (d, espaco, pessoa, msg, rel) => { const k = d + '|' + espaco + '|' + pessoa; cont[k] = cont[k] || { dia: d, espaco, pessoa, mensagens: 0, relatorios: 0 }; cont[k].mensagens += msg; cont[k].relatorios += rel; };\n  let espaco = '';\n  for (const raw of String(it.json.conteudo || '').split(/\\r?\\n/)) {\n    const e = raw.match(/^ESPAÇO:\\s*(.+?)\\s*\\(\\d+ mensage/);\n    if (e) { espaco = e[1].trim(); continue; }\n    if (!espaco || /teste agente de ia/i.test(espaco)) continue;\n    const m = raw.match(/^\\s*(?:↳\\s*)?\\\\?\\[(\\d{2}):\\d{2}\\\\?\\]\\s+([^:\\[]{2,60}?):\\s?(.*)$/);\n    if (!m || /Jos[ée] Redacted Contabilidade/i.test(m[2])) continue;\n    const pessoa = m[2].replace(/\\s+-\\s+.*$/, '').trim();\n    add(dia, espaco, pessoa, 1, 0);\n    const txt = String(m[3] || '').slice(0, 120);\n    if (RELATORIO.test(txt)) add(diaRef(dia, m[1], txt), espaco, pessoa, 0, 1);\n  }\n  Object.values(cont).forEach(r => out.push({ json: r }));\n});\nreturn out;"
+      }
+    },
+    {
+      "name": "Gravar métricas",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dia": "={{ $json.dia }}",
+            "espaco": "={{ $json.espaco }}",
+            "pessoa": "={{ $json.pessoa }}",
+            "mensagens": "={{ $json.mensagens }}",
+            "relatorios": "={{ $json.relatorios }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "dia",
+              "displayName": "dia",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "espaco",
+              "displayName": "espaco",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pessoa",
+              "displayName": "pessoa",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "mensagens",
+              "displayName": "mensagens",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "relatorios",
+              "displayName": "relatorios",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Quantos resumos": {
+      "main": [
+        [
+          {
+            "node": "Dias já contados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Recalcular últimos 10 dias": {
+      "main": [
+        [
+          {
+            "node": "Quantos resumos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dias já contados": {
+      "main": [
+        [
+          {
+            "node": "Drive - resumos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - resumos": {
+      "main": [
+        [
+          {
+            "node": "Resumos a processar",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Resumos a processar": {
+      "main": [
+        [
+          {
+            "node": "Drive - ler resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - ler resumo": {
+      "main": [
+        [
+          {
+            "node": "Contar por pessoa e espaço",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Contar por pessoa e espaço": {
+      "main": [
+        [
+          {
+            "node": "Gravar métricas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seg-sex 18h05": {
+      "main": [
+        [
+          {
+            "node": "Quantos resumos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

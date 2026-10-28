@@ -1,0 +1,431 @@
+{
+  "name": "03-mention-watcher-no-ai",
+  "nodes": [
+    {
+      "name": "A cada 5 min (8h-18h, seg-sex)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/5 8-18 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Config (espaços liberados)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// SEM IA: este fluxo só procura menções e guarda na fila. Custo zero de token.\n// Para liberar outro espaço, acrescente parte do nome (minúsculas) em ESPACOS.\n// 27/10: piloto CS/Comercial liberado (OK do CEO).\n// 27/10: privado CEO ↔ Zezinho — toda mensagem escrita PELO CEO ali vira pedido (sem @). Ninguém mais.\nconst ESPACOS = ['teste agente de ia', 'comercial & cs'];\nconst DM_CEO = 'spaces/<SPACE_ID>';\nconst INICIO_DM = '2026-10-27T13:50:00Z'; // não pega conversas antigas do privado\nconst CONTA = '<EMAIL>'; // conta que é o Zezinho no Chat\nconst INICIO = '2026-10-27T12:00:00Z'; // 27/10 9h: início do piloto (não pega menções antigas do Comercial & CS)\nconst doisDias = new Date(Date.now() - 2 * 86400000).toISOString();\nconst desde = (doisDias > INICIO ? doisDias : INICIO).replace(/\\.\\d+Z$/, 'Z');\nreturn [{ json: { ESPACOS, CONTA, desde, DM_CEO, INICIO_DM } }];"
+      }
+    },
+    {
+      "name": "Testar agora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Chat - listar espaços",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "1000"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Só espaços liberados",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $('Config (espaços liberados)').first().json;\nconst lista = ($input.first().json.spaces || []).filter(s => c.ESPACOS.some(n => String(s.displayName || '').toLowerCase().includes(n)));\n// 27/10: privado do CEO com o Zezinho (conversa direta não tem nome, entra pelo id).\nif (c.DM_CEO && !lista.some(s => s.name === c.DM_CEO)) lista.push({ name: c.DM_CEO, displayName: 'Privado do CEO' });\nreturn lista.map(s => ({ json: { space: s.name, nome: s.displayName, desde: c.desde, conta: c.CONTA } }));"
+      }
+    },
+    {
+      "name": "Chat - id do Zezinho no espaço",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://chat.googleapis.com/v1/\" + $json.space + \"/members/\" + $json.conta }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Chat - membros (nomes)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1232,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://chat.googleapis.com/v1/' + $('Só espaços liberados').item.json.space + '/members' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "1000"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Chat - mensagens recentes",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://chat.googleapis.com/v1/' + $('Só espaços liberados').item.json.space + '/messages' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "500"
+            },
+            {
+              "name": "filter",
+              "value": "=createTime > \"{{ $('Só espaços liberados').item.json.desde }}\""
+            },
+            {
+              "name": "orderBy",
+              "value": "createTime asc"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Menções já registradas",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "data_msg",
+              "condition": "gte",
+              "keyValue": "={{ $('Config (espaços liberados)').first().json.desde }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Menções novas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Menção = anotação USER_MENTION para a conta do Zezinho, escrita por OUTRA pessoa, ainda não registrada.\n// papel: 'ceo' (Redacted Redacted), 'ti' (Redacted) ou 'equipe'. Só ceo/ti podem registrar METAS.\n// 27/10: no privado do CEO, toda mensagem escrita pelo CEO (sem @) vira pedido; mensagem de qualquer outra pessoa ali é ignorada.\n// 27/10: detecção automática de FECHAMENTO (sem @) DESLIGADA por decisão do Redacted — no Comercial & CS vale só o @.\n// Para religar: DETECTAR_FECHAMENTO = true (regra testada: 1ª linha começa com \"Fechamento Comercial | Nome\" ou \"CS | Nome\").\nconst DETECTAR_FECHAMENTO = false;\nconst cfg = $('Config (espaços liberados)').first().json;\nconst FECHAMENTO = /^[^\\p{L}]*(fechamento\\s+(comercial|do dia|cs)|cs)\\s*\\|\\s*\\p{L}/iu;\nconst ESPACO_FECHAMENTO = /comercial\\s*&\\s*cs/i;\nconst esp = $('Só espaços liberados').all().map(i => i.json);\nconst eus = $('Chat - id do Zezinho no espaço').all().map(i => i.json);\nconst ceos = $('Chat - id do CEO no espaço').all().map(i => i.json);\nconst tis = $('Chat - id do Redacted no espaço').all().map(i => i.json);\nconst mems = $('Chat - membros (nomes)').all().map(i => i.json);\nconst msgs = $('Chat - mensagens recentes').all().map(i => i.json);\nconst conhecidas = new Set($input.all().map(i => i.json.message_id).filter(Boolean));\nconst hora = iso => new Date(iso).toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });\nconst idDe = r => r && r.member && r.member.name;\nconst saida = [];\nesp.forEach((e, i) => {\n  const eu = idDe(eus[i]);\n  if (!eu) return;\n  const ceo = idDe(ceos[i]), ti = idDe(tis[i]);\n  const privadoCeo = e.space === cfg.DM_CEO;\n  if (privadoCeo && !ceo) return; // sem confirmar quem é o CEO, não lê o privado\n  const lerFechamento = DETECTAR_FECHAMENTO && ESPACO_FECHAMENTO.test(String(e.nome || ''));\n  const nomes = {};\n  ((mems[i] || {}).memberships || []).forEach(m => { if (m.member && m.member.name) nomes[m.member.name] = m.member.displayName || ''; });\n  const lista = (msgs[i] || {}).messages || [];\n  const autor = m => (m.sender && (m.sender.displayName || nomes[m.sender.name])) || '?';\n  lista.forEach(m => {\n    if (!m.sender || m.sender.name === eu || conhecidas.has(m.name)) return;\n    const texto = String(m.text || '');\n    const marcou = (m.annotations || []).some(a => a.type === 'USER_MENTION' && a.userMention && a.userMention.user && a.userMention.user.name === eu);\n    const ehFechamento = lerFechamento && !m.threadReply && texto.length > 200 && FECHAMENTO.test(texto.trim().split('\\n')[0]);\n    const mencionou = privadoCeo\n      ? (m.sender.name === ceo && m.createTime > cfg.INICIO_DM && texto.trim().length > 0)\n      : (marcou || ehFechamento);\n    if (!mencionou) return;\n    const thread = (m.thread && m.thread.name) || '';\n    const antes = lista.filter(x => x.thread && x.thread.name === thread && x.createTime < m.createTime).slice(-8)\n      .map(x => '[' + hora(x.createTime) + '] ' + autor(x) + ': ' + String(x.text || '').slice(0, 500)).join('\\n');\n    const anexos = (m.attachment || []).map(a => ({ nome: a.contentName || 'anexo', chat_resource: (a.attachmentDataRef && a.attachmentDataRef.resourceName) || '', drive_file_id: (a.driveDataRef && a.driveDataRef.driveFileId) || '' }));\n    const papel = m.sender.name === ceo ? 'ceo' : m.sender.name === ti ? 'ti' : 'equipe';\n    const obs = (ehFechamento && !marcou) ? ' [fechamento do dia detectado automaticamente, sem @: avalie como relatório]' : '';\n    saida.push({ json: { message_id: m.name, space_id: e.space, space_nome: e.nome, thread_name: thread, autor: autor(m), papel, data_msg: m.createTime, texto: texto.slice(0, 6000), conversa_antes: (antes || '(início da conversa)') + obs, anexos: JSON.stringify(anexos), status: 'nova', tentativas: 0, tipo: '', resultado: '', atualizado_em: new Date().toISOString() } });\n  });\n});\nreturn saida;"
+      }
+    },
+    {
+      "name": "Guardar na fila de menções",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        2016,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "autoMapInputData",
+          "value": {},
+          "matchingColumns": [],
+          "schema": []
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Chat - id do CEO no espaço",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1008,
+        260
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://chat.googleapis.com/v1/' + $('Só espaços liberados').item.json.space + '/members/<EMAIL>' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Chat - id do Redacted no espaço",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        260
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ 'https://chat.googleapis.com/v1/' + $('Só espaços liberados').item.json.space + '/members/<EMAIL>' }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "A cada 5 min (8h-18h, seg-sex)": {
+      "main": [
+        [
+          {
+            "node": "Config (espaços liberados)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config (espaços liberados)": {
+      "main": [
+        [
+          {
+            "node": "Chat - listar espaços",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Testar agora": {
+      "main": [
+        [
+          {
+            "node": "Config (espaços liberados)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - listar espaços": {
+      "main": [
+        [
+          {
+            "node": "Só espaços liberados",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Só espaços liberados": {
+      "main": [
+        [
+          {
+            "node": "Chat - id do Zezinho no espaço",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - membros (nomes)": {
+      "main": [
+        [
+          {
+            "node": "Chat - mensagens recentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - mensagens recentes": {
+      "main": [
+        [
+          {
+            "node": "Menções já registradas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Menções já registradas": {
+      "main": [
+        [
+          {
+            "node": "Menções novas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Menções novas": {
+      "main": [
+        [
+          {
+            "node": "Guardar na fila de menções",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - id do Zezinho no espaço": {
+      "main": [
+        [
+          {
+            "node": "Chat - id do CEO no espaço",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - id do CEO no espaço": {
+      "main": [
+        [
+          {
+            "node": "Chat - id do Redacted no espaço",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - id do Redacted no espaço": {
+      "main": [
+        [
+          {
+            "node": "Chat - membros (nomes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

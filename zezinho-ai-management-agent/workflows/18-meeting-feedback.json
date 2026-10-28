@@ -1,0 +1,436 @@
+{
+  "name": "18-meeting-feedback",
+  "nodes": [
+    {
+      "name": "Receber ATA",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "titulo",
+              "type": "string"
+            },
+            {
+              "name": "assunto",
+              "type": "string"
+            },
+            {
+              "name": "pasta_id",
+              "type": "string"
+            },
+            {
+              "name": "ata",
+              "type": "string"
+            },
+            {
+              "name": "transcricao",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Montar pedido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Feedback pós-ATA (26/10): 1 chamada ao Gemini por reunião. Transcrição cortada em 60 mil caracteres para controlar custo.\nconst d = $input.first().json;\nconst regras = `Você é o Zezinho, gestor de IA da Redacted Contabilidade (REDACTED). Leia a ATA e a transcrição de uma reunião e escreva um FEEDBACK DA REUNIÃO para a equipe da REDACTED. Ele será publicado no chat interno REDACTED | Geral depois de aprovado por um humano. O objetivo é a EQUIPE DA REDACTED conduzir reuniões cada vez melhores.\n\nFormato (Google Chat: *negrito* com UM asterisco, listas com \"•\", sem # e sem **), no máximo 1.500 caracteres:\n*🗣️ FEEDBACK DA REUNIÃO — {título curto} ({data dd/mm})*\n\n✅ *O que foi bem*\n• 2 a 3 pontos específicos da condução da REDACTED (ex.: pauta clara, decisões com dono, boa preparação, cliente bem conduzido)\n\n⚠️ *Pontos de atenção*\n• decisões sem responsável ou sem prazo, assuntos que ficaram sem conclusão, tempo fora da pauta (omita a seção se não houver)\n\n💡 *Para a próxima reunião*\n• 2 ações práticas que a EQUIPE DA REDACTED pode fazer para a reunião render mais: pauta enviada antes, tempo por assunto, quem conduz, materiais preparados, fechar cada assunto com dono e prazo, resumo final. NUNCA coloque aqui tarefa do cliente.\n\n📌 *Próximos passos*\n• ação — responsável — prazo (SÓ o que foi combinado; sem prazo, escreva \"definir prazo\"). Aqui podem entrar ações do cliente.\n\nRegras:\n- Use só o que está na ATA e na transcrição. Não invente nada.\n- Tom construtivo: fale do trabalho e da reunião, nunca julgue a pessoa.\n- Reunião com cliente: cite só o nome da empresa e descreva atrasos ou falhas do cliente de forma neutra (ex.: \"alinhar prazos de envio\"), sem expor o cliente; NUNCA escreva valores, CPF, CNPJ, salários, dívidas detalhadas ou problemas pessoais do cliente.\n- NUNCA cite desligamento, saída, demissão, salário, saúde ou assunto pessoal de colaborador da REDACTED.\n- Responda só com o texto do feedback.`;\nconst texto = regras\n  + '\\n\\nTÍTULO: ' + (d.titulo || '')\n  + '\\nASSUNTO: ' + (d.assunto || '')\n  + '\\n\\nATA:\\n' + String(d.ata || '')\n  + '\\n\\nTRANSCRIÇÃO:\\n' + String(d.transcricao || '').slice(0, 60000);\nreturn [{ json: { titulo: d.titulo, pasta_id: d.pasta_id, body: { contents: [{ parts: [{ text: texto }] }], generationConfig: { temperature: 0.3 } } } }];"
+      }
+    },
+    {
+      "name": "Gemini - feedback",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpHeaderAuth"
+        }
+      }
+    },
+    {
+      "name": "Ler feedback e custo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const r = $input.first().json;\nconst texto = ((r.candidates && r.candidates[0] && r.candidates[0].content && r.candidates[0].content.parts) || []).map(p => p.text || '').join('').trim();\nif (!texto) throw new Error('Gemini não devolveu o feedback da reunião.');\nconst u = r.usageMetadata || {};\nconst ent = u.promptTokenCount || 0;\nconst sai = (u.candidatesTokenCount || 0) + (u.thoughtsTokenCount || 0);\n// Mesma conta das menções: US$ 0,30/M entrada, US$ 2,50/M saída, US$ 1 = R$ 5,50\nconst custo = Math.round(((ent * 0.30 + sai * 2.50) / 1e6) * 5.5 * 10000) / 10000;\nconst d = $('Montar pedido').first().json;\nreturn [{ json: { titulo: d.titulo, pasta_id: d.pasta_id, feedback: texto.slice(0, 3300), tokens_entrada: ent, tokens_saida: sai, custo_brl: custo } }];"
+      }
+    },
+    {
+      "name": "Enviar para aprovação",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_id": "={{ \"reuniao-\" + $json.pasta_id }}",
+            "space_id": "spaces/<SPACE_ID>",
+            "space_nome": "REDACTED | Geral",
+            "thread_name": "",
+            "autor": "Zezinho",
+            "setor": "Geral",
+            "tipo": "avaliacao_reuniao",
+            "titulo_relatorio": "={{ \"Feedback da reunião — \" + $json.titulo }}",
+            "nota": 0,
+            "pontos_fortes": "",
+            "riscos": "",
+            "melhorias": "",
+            "contexto": "={{ \"Feedback pós-ATA: \" + $json.titulo + \" — pasta: <GOOGLE_URL>\" + $json.pasta_id }}",
+            "resposta": "={{ $json.feedback }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_id",
+              "displayName": "space_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_nome",
+              "displayName": "space_nome",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_name",
+              "displayName": "thread_name",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "autor",
+              "displayName": "autor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "titulo_relatorio",
+              "displayName": "titulo_relatorio",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nota",
+              "displayName": "nota",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pontos_fortes",
+              "displayName": "pontos_fortes",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "riscos",
+              "displayName": "riscos",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "melhorias",
+              "displayName": "melhorias",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contexto",
+              "displayName": "contexto",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resposta",
+              "displayName": "resposta",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    },
+    {
+      "name": "Registrar consumo",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dia": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd') }}",
+            "origem": "reuniao",
+            "quem": "Zezinho",
+            "tipo": "avaliacao_reuniao",
+            "modelo": "gemini-3.5-flash-lite",
+            "tokens_entrada": "={{ $('Ler feedback e custo').item.json.tokens_entrada }}",
+            "tokens_saida": "={{ $('Ler feedback e custo').item.json.tokens_saida }}",
+            "custo_brl": "={{ $('Ler feedback e custo').item.json.custo_brl }}",
+            "message_id": "={{ 'reuniao-' + $('Ler feedback e custo').item.json.pasta_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "dia",
+              "displayName": "dia",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "origem",
+              "displayName": "origem",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quem",
+              "displayName": "quem",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modelo",
+              "displayName": "modelo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_entrada",
+              "displayName": "tokens_entrada",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_saida",
+              "displayName": "tokens_saida",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "custo_brl",
+              "displayName": "custo_brl",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Receber ATA": {
+      "main": [
+        [
+          {
+            "node": "Montar pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar pedido": {
+      "main": [
+        [
+          {
+            "node": "Gemini - feedback",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - feedback": {
+      "main": [
+        [
+          {
+            "node": "Ler feedback e custo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler feedback e custo": {
+      "main": [
+        [
+          {
+            "node": "Enviar para aprovação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar para aprovação": {
+      "main": [
+        [
+          {
+            "node": "Registrar consumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,1385 @@
+{
+  "name": "05-human-approval-flow",
+  "nodes": [
+    {
+      "name": "Receber pedido",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "row_id",
+              "type": "number"
+            },
+            {
+              "name": "space_id"
+            },
+            {
+              "name": "space_nome"
+            },
+            {
+              "name": "thread_name"
+            },
+            {
+              "name": "setor"
+            },
+            {
+              "name": "autor"
+            },
+            {
+              "name": "tipo"
+            },
+            {
+              "name": "titulo"
+            },
+            {
+              "name": "nota",
+              "type": "number"
+            },
+            {
+              "name": "contexto"
+            },
+            {
+              "name": "resposta"
+            },
+            {
+              "name": "aprovador_email"
+            },
+            {
+              "name": "auto",
+              "type": "boolean"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Config - quem aprova",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        192
+      ],
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "aprovador",
+              "name": "aprovador_email",
+              "value": "={{ $json.aprovador_email || '<EMAIL>' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      }
+    },
+    {
+      "name": "Achar conversa direta do aprovador",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        192
+      ],
+      "parameters": {
+        "url": "=https://chat.googleapis.com/v1/spaces:findDirectMessage?name=users/{{ $json.aprovador_email }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Pedir aprovação",
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        672,
+        192
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "spaceId": "={{ $('Achar conversa direta do aprovador').item.json.name }}",
+        "message": "=👆 *Aprovar a mensagem acima?*\nTipo: {{ $('Receber pedido').item.json.tipo }} | Se publicar, sai em: {{ $('Receber pedido').item.json.tipo === 'relatorio_diario' ? 'REDACTED | Geral' : $('Receber pedido').item.json.space_nome }}",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "✅ Publicar",
+            "disapproveLabel": "❌ Rejeitar"
+          }
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "resumeAmount": 3,
+              "resumeUnit": "days"
+            }
+          },
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Decisão",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        176
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ !!($json.data && $json.data.approved === true) }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "id": "<ID>"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ !!($json.data && $json.data.approved === false) }}",
+                    "operator": {
+                      "type": "boolean",
+                      "operation": "true",
+                      "singleValue": true
+                    },
+                    "id": "<ID>"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Expirou"
+        }
+      }
+    },
+    {
+      "name": "Publicar no espaço",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $('Receber pedido').item.json.tipo === 'relatorio_diario' ? 'spaces/<SPACE_ID>' : $('Receber pedido').item.json.space_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '🤖 *Zezinho*\\n' + $('Receber pedido').item.json.resposta }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Marcar aprovado",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Receber pedido').item.json.row_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "aprovado",
+            "aprovador": "={{ $('Config - quem aprova').item.json.aprovador_email }}",
+            "decidido_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aprovador",
+              "displayName": "aprovador",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decidido_em",
+              "displayName": "decidido_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Perguntar motivo da rejeição",
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "spaceId": "={{ $('Achar conversa direta do aprovador').item.json.name }}",
+        "message": "🤖 Entendido. Me conta rapidinho o que estava errado ou como você faria? Eu guardo isso como regra para as próximas.",
+        "responseType": "freeText",
+        "options": {
+          "messageButtonLabel": "Responder",
+          "limitWaitTime": {
+            "values": {
+              "resumeUnit": "days"
+            }
+          },
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Marcar rejeitado",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Receber pedido').item.json.row_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "rejeitado",
+            "aprovador": "={{ $('Config - quem aprova').item.json.aprovador_email }}",
+            "comentario_aprovador": "={{ ($('Perguntar motivo da rejeição').item.json.data || {}).text || '' }}",
+            "decidido_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aprovador",
+              "displayName": "aprovador",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "comentario_aprovador",
+              "displayName": "comentario_aprovador",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decidido_em",
+              "displayName": "decidido_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Escreveu motivo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1568,
+        192
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($('Perguntar motivo da rejeição').item.json.data || {}).text || '' }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Guardar preferência do aprovador",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1792,
+        192
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "setor": "={{ $('Receber pedido').item.json.setor }}",
+            "categoria": "preferencia_do_gestor",
+            "titulo": "={{ 'Regra do aprovador: ' + ($('Receber pedido').item.json.tipo === 'relatorio_diario' ? 'Relatório diário' : $('Receber pedido').item.json.tipo === 'avaliacao_reuniao' ? 'Feedback de reunião' : ($('Receber pedido').item.json.titulo || $('Receber pedido').item.json.tipo)) }}",
+            "descricao": "={{ 'Orientação do aprovador ao rejeitar (' + $('Receber pedido').item.json.tipo + ', ' + $now.setZone('America/Sao_Paulo').toFormat('dd/MM') + '): ' + String($('Perguntar motivo da rejeição').item.json.data.text).trim() }}",
+            "fonte_message_id": "={{ 'avaliacao:' + $('Receber pedido').item.json.row_id }}",
+            "data_info": "={{ $now.toISO() }}",
+            "atualizado_em": "={{ $now.toISO() }}",
+            "ativo": true
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "categoria",
+              "displayName": "categoria",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "descricao",
+              "displayName": "descricao",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fonte_message_id",
+              "displayName": "fonte_message_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data_info",
+              "displayName": "data_info",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "atualizado_em",
+              "displayName": "atualizado_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ativo",
+              "displayName": "ativo",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "boolean",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Marcar expirado",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1344,
+        480
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Receber pedido').item.json.row_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "expirado",
+            "decidido_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decidido_em",
+              "displayName": "decidido_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Ler status atual",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1008,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Receber pedido').item.json.row_id }}"
+            }
+          ]
+        },
+        "limit": 1
+      }
+    },
+    {
+      "name": "Ainda não publicado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "aprovado",
+              "operator": {
+                "type": "string",
+                "operation": "notEquals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Automático?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        560,
+        400
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Receber pedido').item.json.auto === true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Publicar (automático)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        784,
+        560
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $('Receber pedido').item.json.tipo === 'relatorio_diario' ? 'spaces/<SPACE_ID>' : $('Receber pedido').item.json.space_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '🤖 *Zezinho*\\n' + $('Receber pedido').item.json.resposta }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Marcar publicado (automático)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1008,
+        560
+      ],
+      "parameters": {
+        "operation": "update",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyValue": "={{ $('Receber pedido').item.json.row_id }}"
+            }
+          ]
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "status": "publicado_auto",
+            "aprovador": "automático",
+            "decidido_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aprovador",
+              "displayName": "aprovador",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "decidido_em",
+              "displayName": "decidido_em",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Cópia para o Redacted (👍/👎)",
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        1232,
+        560
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "spaceId": "={{ $('Achar conversa direta do aprovador').item.json.name }}",
+        "message": "=🤖 *Zezinho — publiquei sozinho* (juiz ≥ 8, nada sensível, sem rejeição recente)\n*Tipo:* {{ $('Receber pedido').item.json.tipo }} | *Onde:* {{ $('Receber pedido').item.json.tipo === 'relatorio_diario' ? 'REDACTED | Geral' : $('Receber pedido').item.json.space_nome }} | *{{ ($('Receber pedido').item.json.contexto || '').split(' | ')[0] }}*\n\n{{ $('Receber pedido').item.json.resposta }}\n\n_Ficou bom? Se marcar 👎, eu pergunto o motivo, transformo em regra e volto a pedir aprovação antes de publicar._",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "👍 Ficou bom",
+            "disapproveLabel": "👎 Ficou ruim"
+          }
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "resumeAmount": 3,
+              "resumeUnit": "days"
+            }
+          },
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Ficou ruim?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1456,
+        560
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ !!($json.data && $json.data.approved === false) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Relatório diário publicado?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Receber pedido').item.json.tipo }}",
+              "rightValue": "relatorio_diario",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Cobrar pendências (sem esperar)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        2016,
+        0
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "resposta": "={{ $('Receber pedido').item.json.resposta }}",
+            "message_id": "={{ String($('Receber pedido').item.json.row_id) }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "resposta",
+              "displayName": "resposta",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "name": "Mostrar texto completo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        600,
+        300
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $json.name }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '🤖 *Zezinho — pedido de aprovação*\\n*Espaço:* ' + $('Receber pedido').item.json.space_nome + ' | *Setor:* ' + $('Receber pedido').item.json.setor + '\\n*Quem escreveu:* ' + $('Receber pedido').item.json.autor + '\\n*Tipo:* ' + $('Receber pedido').item.json.tipo + ($('Receber pedido').item.json.nota ? ' | *Nota:* ' + $('Receber pedido').item.json.nota + '/10' : '') + '\\n\\n*Contexto:*\\n' + String($('Receber pedido').item.json.contexto || '').slice(0, 600) + '\\n\\n*Resposta que vou publicar:*\\n' + $('Receber pedido').item.json.resposta }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Avisar já publicado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        -160
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $('Achar conversa direta do aprovador').item.json.name }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: '✅ Isso já foi publicado (aprovado pelo ' + ($json.aprovador === '<EMAIL>' ? 'CEO' : 'Redacted') + '). Não precisa fazer nada.' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Outro aprovador",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1792,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// 27/10: relatório publicado → avisa o outro aprovador para não procurar o botão à toa.\nconst R = $('Receber pedido').first().json;\nif (R.tipo !== 'relatorio_diario') return [];\nconst TODOS = ['<EMAIL>', '<EMAIL>'];\nconst eu = $('Config - quem aprova').first().json.aprovador_email;\nconst nome = e => e === TODOS[1] ? 'CEO' : 'Redacted';\nreturn TODOS.filter(e => e !== eu).map(e => ({ json: { email: e, texto: '✅ ' + (R.titulo || 'Relatório') + ' já foi publicado no REDACTED | Geral (aprovado pelo ' + nome(eu) + '). Não precisa aprovar a sua cópia.' } }));"
+      }
+    },
+    {
+      "name": "Achar DM do outro",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2016,
+        -200
+      ],
+      "parameters": {
+        "url": "=https://chat.googleapis.com/v1/spaces:findDirectMessage?name=users/{{ $json.email }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Avisar o outro",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2240,
+        -200
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $json.name }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Outro aprovador').item.json.texto }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Ler status (expirou)",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1008,
+        384
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "id",
+              "condition": "eq",
+              "keyValue": "={{ $('Receber pedido').item.json.row_id }}"
+            }
+          ]
+        },
+        "limit": 1
+      }
+    },
+    {
+      "name": "Ainda pendente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.status }}",
+              "rightValue": "pendente",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Receber pedido": {
+      "main": [
+        [
+          {
+            "node": "Config - quem aprova",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config - quem aprova": {
+      "main": [
+        [
+          {
+            "node": "Achar conversa direta do aprovador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pedir aprovação": {
+      "main": [
+        [
+          {
+            "node": "Decisão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Decisão": {
+      "main": [
+        [
+          {
+            "node": "Ler status atual",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Perguntar motivo da rejeição",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler status (expirou)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Perguntar motivo da rejeição": {
+      "main": [
+        [
+          {
+            "node": "Marcar rejeitado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar rejeitado": {
+      "main": [
+        [
+          {
+            "node": "Escreveu motivo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escreveu motivo?": {
+      "main": [
+        [
+          {
+            "node": "Guardar preferência do aprovador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publicar no espaço": {
+      "main": [
+        [
+          {
+            "node": "Marcar aprovado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler status atual": {
+      "main": [
+        [
+          {
+            "node": "Ainda não publicado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ainda não publicado?": {
+      "main": [
+        [
+          {
+            "node": "Publicar no espaço",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Avisar já publicado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achar conversa direta do aprovador": {
+      "main": [
+        [
+          {
+            "node": "Automático?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Automático?": {
+      "main": [
+        [
+          {
+            "node": "Publicar (automático)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mostrar texto completo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Publicar (automático)": {
+      "main": [
+        [
+          {
+            "node": "Marcar publicado (automático)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar publicado (automático)": {
+      "main": [
+        [
+          {
+            "node": "Cópia para o Redacted (👍/👎)",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Relatório diário publicado?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cópia para o Redacted (👍/👎)": {
+      "main": [
+        [
+          {
+            "node": "Ficou ruim?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ficou ruim?": {
+      "main": [
+        [
+          {
+            "node": "Perguntar motivo da rejeição",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Marcar aprovado": {
+      "main": [
+        [
+          {
+            "node": "Relatório diário publicado?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Outro aprovador",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Relatório diário publicado?": {
+      "main": [
+        [
+          {
+            "node": "Cobrar pendências (sem esperar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mostrar texto completo": {
+      "main": [
+        [
+          {
+            "node": "Pedir aprovação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Outro aprovador": {
+      "main": [
+        [
+          {
+            "node": "Achar DM do outro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achar DM do outro": {
+      "main": [
+        [
+          {
+            "node": "Avisar o outro",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler status (expirou)": {
+      "main": [
+        [
+          {
+            "node": "Ainda pendente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ainda pendente?": {
+      "main": [
+        [
+          {
+            "node": "Marcar expirado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,197 @@
+{
+  "name": "16-tool-send-direct-message",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "titulo"
+            },
+            {
+              "name": "conteudo"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Config - destinatário",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": true,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "dest",
+              "name": "destinatario_email",
+              "value": "<EMAIL>",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Achar conversa direta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "url": "=https://chat.googleapis.com/v1/spaces:findDirectMessage?name=users/{{ $json.destinatario_email }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Dividir em partes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const pedido = $('Pedido do agente').first().json;\nconst espaco = $('Achar conversa direta').first().json.name;\nconst texto = '🤖 *Zezinho* — ' + (pedido.titulo || 'Relatório') + '\\n\\n' + String(pedido.conteudo || '');\nconst partes = [];\nlet resto = texto;\nwhile (resto.length > 3800) {\n  let corte = resto.lastIndexOf('\\n', 3800);\n  if (corte < 1000) corte = 3800;\n  partes.push(resto.slice(0, corte));\n  resto = resto.slice(corte).replace(/^\\n+/, '');\n}\npartes.push(resto);\nreturn partes.map((t, i) => ({ json: { espaco, texto: partes.length > 1 ? t + '\\n_(parte ' + (i + 1) + '/' + partes.length + ')_' : t } }));"
+      }
+    },
+    {
+      "name": "Enviar no privado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $json.espaco }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.texto }) }}",
+        "options": {
+          "batching": {
+            "batch": {
+              "batchSize": 1,
+              "batchInterval": 800
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Resposta ao agente",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "ok",
+              "name": "resultado",
+              "value": "=Enviado no privado do Redacted em {{ $items().length }} mensagem(ns).",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Config - destinatário",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config - destinatário": {
+      "main": [
+        [
+          {
+            "node": "Achar conversa direta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achar conversa direta": {
+      "main": [
+        [
+          {
+            "node": "Dividir em partes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dividir em partes": {
+      "main": [
+        [
+          {
+            "node": "Enviar no privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar no privado": {
+      "main": [
+        [
+          {
+            "node": "Resposta ao agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

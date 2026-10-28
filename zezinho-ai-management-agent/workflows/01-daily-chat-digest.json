@@ -1,0 +1,431 @@
+{
+  "name": "01-daily-chat-digest",
+  "nodes": [
+    {
+      "name": "Seg a sex 18h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Config (dia e conta)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Só dias úteis. Rodando à tarde (18h; era 16h50 até 27/10): desde 18h do dia útil ANTERIOR até agora (segunda: desde sexta 18h),\n// para não perder o que foi escrito depois do resumo de ontem. Rodando de manhã: ONTEM inteiro (segunda = sexta + sábado + domingo).\n// Horário de Brasília (UTC-3). Para trocar a conta que lê os chats: troque a credencial dos nós \"Chat - ...\" (só eles usam o Chat).\nconst agoraSP = new Date(new Date().toLocaleString('en-US', { timeZone: 'America/Sao_Paulo' }));\nconst fmt = d => d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');\nconst br = s => s.split('-').reverse().join('/');\nconst tarde = agoraSP.getHours() >= 12;\nconst fim = new Date(agoraSP); if (!tarde) fim.setDate(fim.getDate() - 1);\nconst inicio = new Date(agoraSP); inicio.setDate(inicio.getDate() - (agoraSP.getDay() === 1 ? 3 : 1));\nconst diaIni = fmt(inicio), diaFim = fmt(fim);\n// Transição 28/10: o resumo de 27/10 cortou em 16h50, então o de 28/10 começa em 16h50.\nconst corte = diaIni <= '2026-10-27' ? { utc: 'T19:50:00Z', txt: '16h50' } : { utc: 'T21:00:00Z', txt: '18h' };\nlet dia, diaBr, de, ate;\nif (tarde) {\n  dia = diaFim; diaBr = br(diaFim) + ' (desde ' + br(diaIni) + ' ' + corte.txt + ')';\n  de = diaIni + corte.utc;\n  ate = new Date().toISOString().replace(/\\.\\d{3}/, '');\n} else {\n  dia = diaIni === diaFim ? diaFim : diaIni + ' a ' + diaFim;\n  diaBr = diaIni === diaFim ? br(diaFim) : br(diaIni) + ' a ' + br(diaFim);\n  de = diaIni + 'T03:00:00Z';\n  ate = new Date(new Date(diaFim + 'T03:00:00Z').getTime() + 86400000).toISOString().replace('.000', '');\n}\nreturn [{ json: { dia, diaBr, de, ate, pastaNome: 'Zezinho' } }];"
+      }
+    },
+    {
+      "name": "Testar agora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Chat - listar espaços",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://chat.googleapis.com/v1/spaces",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "1000"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Espaços e grupos (sem conversas privadas)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Lê espaços (SPACE) e grupos (GROUP_CHAT). Conversas 1 a 1 (DIRECT_MESSAGE) ficam de fora.\n// PRIVACIDADE: o resumo vira o relatório do REDACTED | Geral, então espaços RESTRITOS também ficam de fora\n// (descrição com \"acesso restrito\"/\"interface restrita\", nome com \"Interno\" ou \"DP & RH\"), e o espaço de teste do TI.\n// Cuidado: o Geral diz \"não publicar informações restritas\" e NÃO é restrito.\nconst c = $('Config (dia e conta)').first().json;\nconst RESTRITO = s => /acesso restrito|interface restrita/i.test((s.spaceDetails && s.spaceDetails.description) || '') || /interno|dp & rh|teste agente de ia/i.test(s.displayName || '');\nconst lista = ($input.first().json.spaces || []).filter(s => s.spaceType !== 'DIRECT_MESSAGE' && s.type !== 'DM' && !RESTRITO(s));\nreturn lista.map(s => ({ json: { space: s.name, nome: s.displayName || '(grupo sem nome)', tipo: s.spaceType || s.type, de: c.de, ate: c.ate } }));"
+      }
+    },
+    {
+      "name": "Chat - mensagens do dia",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://chat.googleapis.com/v1/{{ $json.space }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "1000"
+            },
+            {
+              "name": "filter",
+              "value": "=createTime > \"{{ $json.de }}\" AND createTime < \"{{ $json.ate }}\""
+            },
+            {
+              "name": "orderBy",
+              "value": "createTime asc"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Chat - membros (nomes)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://chat.googleapis.com/v1/{{ $('Espaços e grupos (sem conversas privadas)').item.json.space }}/members",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "1000"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Montar documento do dia",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const c = $('Config (dia e conta)').first().json;\nconst esp = $('Espaços e grupos (sem conversas privadas)').all().map(i => i.json);\nconst msgs = $('Chat - mensagens do dia').all().map(i => i.json);\nconst mem = $('Chat - membros (nomes)').all().map(i => i.json);\nconst hora = iso => new Date(iso).toLocaleTimeString('pt-BR', { timeZone: 'America/Sao_Paulo', hour: '2-digit', minute: '2-digit' });\nconst br = c.diaBr;\nlet total = 0, partes = [], erros = [];\nesp.forEach((e, i) => {\n  const r = msgs[i] || {};\n  if (r.error) { erros.push(e.nome + ': ' + JSON.stringify(r.error).slice(0, 150)); return; }\n  const lista = r.messages || [];\n  if (!lista.length) return;\n  const nomes = {};\n  ((mem[i] || {}).memberships || []).forEach(m => { if (m.member && m.member.name) nomes[m.member.name] = m.member.displayName || ''; });\n  let t = '\\n==============================\\nESPAÇO: ' + e.nome + ' (' + lista.length + ' mensagens)\\n==============================\\n';\n  lista.forEach(m => {\n    const s = m.sender || {};\n    const autor = s.displayName || nomes[s.name] || s.email || s.name || '?';\n    const texto = (m.text || m.formattedText || (m.attachment && m.attachment.length ? '' : '(sem texto)')).trim();\n    const anexos = (m.attachment || []).map(a => a.contentName || 'anexo').join(', ');\n    t += '[' + hora(m.createTime) + '] ' + (m.threadReply ? '   ↳ ' : '') + autor + (s.type === 'BOT' ? ' (robô)' : '') + ': ' + texto + (anexos ? ' [anexo: ' + anexos + ']' : '') + '\\n';\n  });\n  total += lista.length; partes.push(t);\n});\nlet doc = 'RESUMO DOS CHATS DA REDACTED — ' + br + '\\n';\ndoc += 'Gerado automaticamente pelo n8n para o Zezinho. Conteúdo: todas as mensagens do período em espaços e grupos do Google Chat (conversas privadas 1 a 1 não entram). Na segunda, o resumo junta sexta, sábado e domingo.\\n';\ndoc += 'Espaços lidos: ' + esp.length + ' — com mensagens no período: ' + partes.length + ' — total de mensagens: ' + total + '\\n';\ndoc += '\"↳\" = resposta dentro de uma conversa (thread).\\n';\nif (erros.length) doc += '\\nNÃO FOI POSSÍVEL LER: ' + erros.join(' | ') + '\\n';\nif (!partes.length) doc += '\\nNenhuma mensagem nos chats neste período.\\n';\ndoc += partes.join('');\nreturn [{ json: { dia: c.dia, nomeArquivo: 'Chats REDACTED — ' + c.dia, texto: doc, total, espacos: esp.length, comMensagens: partes.length, erros } }];"
+      }
+    },
+    {
+      "name": "Drive - achar pasta Zezinho",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "name = 'Zezinho' and mimeType = 'application/vnd.google-apps.folder' and 'root' in parents and trashed = false"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Pasta já existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1792,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.files || []).length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Drive - salvar resumo do dia (Google Docs)",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2240,
+        96
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "createFromText",
+        "content": "={{ $('Montar documento do dia').first().json.texto }}",
+        "name": "={{ $('Montar documento do dia').first().json.nomeArquivo }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {
+          "convertToGoogleDocument": true
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - criar pasta Zezinho",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        2016,
+        176
+      ],
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "name": "Zezinho",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Config (dia e conta)": {
+      "main": [
+        [
+          {
+            "node": "Chat - listar espaços",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Testar agora": {
+      "main": [
+        [
+          {
+            "node": "Config (dia e conta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - listar espaços": {
+      "main": [
+        [
+          {
+            "node": "Espaços e grupos (sem conversas privadas)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Espaços e grupos (sem conversas privadas)": {
+      "main": [
+        [
+          {
+            "node": "Chat - mensagens do dia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - mensagens do dia": {
+      "main": [
+        [
+          {
+            "node": "Chat - membros (nomes)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat - membros (nomes)": {
+      "main": [
+        [
+          {
+            "node": "Montar documento do dia",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar documento do dia": {
+      "main": [
+        [
+          {
+            "node": "Drive - achar pasta Zezinho",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - achar pasta Zezinho": {
+      "main": [
+        [
+          {
+            "node": "Pasta já existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pasta já existe?": {
+      "main": [
+        [
+          {
+            "node": "Drive - salvar resumo do dia (Google Docs)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drive - criar pasta Zezinho",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - criar pasta Zezinho": {
+      "main": [
+        [
+          {
+            "node": "Drive - salvar resumo do dia (Google Docs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seg a sex 18h": {
+      "main": [
+        [
+          {
+            "node": "Config (dia e conta)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,278 @@
+{
+  "name": "07-tool-fetch-new-messages",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "observacao",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Espaços ativos",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "ativo",
+              "condition": "isTrue"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Calcular janela",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Para cada espaço ativo, calcula \"desde quando\" buscar mensagens.\n// Regra: olhamos no máximo os últimos 3 dias, e nunca antes da data em que\n// o espaço foi ligado (coluna ultima_leitura). Assim ele não lê o histórico inteiro sem querer.\nconst tresDiasAtras = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);\nconst saida = [];\n\nfor (const item of $input.all()) {\n  const e = item.json;\n  if (!e.space_id) continue; // linha vazia (tabela sem espaços)\n\n  let desde = tresDiasAtras;\n  if (e.ultima_leitura) {\n    const d = new Date(e.ultima_leitura);\n    if (d > desde) desde = d; // espaço ligado há menos de 3 dias\n  }\n\n  saida.push({ json: { space_id: e.space_id, nome: e.nome || '', setor: e.setor || '', desde: desde.toISOString() } });\n}\n\n// Se não tem nenhum espaço ativo, avisa o próximo nó com \"vazio: true\"\nif (saida.length === 0) return [{ json: { vazio: true } }];\nreturn saida;"
+      }
+    },
+    {
+      "name": "Nenhum espaço ativo?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.vazio === true }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Avisar: sem espaços",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "q",
+              "name": "quantidade_total",
+              "value": 0,
+              "type": "number"
+            },
+            {
+              "id": "a",
+              "name": "aviso",
+              "value": "Nenhum espaço está ativo na tabela \"Gestor IA - Espaços monitorados\". Nada para ler.",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Buscar mensagens no Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        192
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://chat.googleapis.com/v1/{{ $json.space_id }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "pageSize",
+              "value": "100"
+            },
+            {
+              "name": "filter",
+              "value": "=createTime > \"{{ $json.desde }}\""
+            }
+          ]
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Já processadas",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "data_msg",
+              "condition": "gte",
+              "keyValue": "={{ $now.minus({ days: 4 }).toISO() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Montar lista para o agente",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Junta as mensagens de todos os espaços e tira:\n//  - as que o agente já processou (tabela \"Mensagens processadas\")\n//  - as de bots e as do próprio Gestor IA (começam com 🤖)\nconst espacos = $('Calcular janela').all();          // 1 item por espaço, na mesma ordem\nconst respostas = $('Buscar mensagens no Chat').all(); // resposta da API, mesma ordem\nconst jaProcessadas = new Set(\n  $('Já processadas').all().map(i => i.json.message_id).filter(Boolean)\n);\n\nconst mensagens = [];\nconst erros = [];\n\nrespostas.forEach((r, i) => {\n  const esp = espacos[i] ? espacos[i].json : {};\n\n  // Se a API deu erro nesse espaço (ex.: conta saiu do espaço), registra e segue\n  if (r.json.error) {\n    erros.push(esp.nome + ': ' + JSON.stringify(r.json.error).slice(0, 200));\n    return;\n  }\n\n  for (const m of (r.json.messages || [])) {\n    if (jaProcessadas.has(m.name)) continue;\n    if (m.sender && m.sender.type === 'BOT') continue;\n    const texto = m.text || m.formattedText || '';\n    if (texto.trim().startsWith('🤖')) continue; // mensagem do próprio Gestor IA\n\n    // Arquivos anexados direto no Chat ou do Drive\n    const anexos = (m.attachment || []).map(a => ({\n      nome: a.contentName || '',\n      tipo_arquivo: a.contentType || '',\n      chat_resource: a.attachmentDataRef ? a.attachmentDataRef.resourceName : '',\n      drive_file_id: a.driveDataRef ? a.driveDataRef.driveFileId : ''\n    }));\n\n    // Links do Drive colados no texto também contam como anexo\n    for (const ann of (m.annotations || [])) {\n      const meta = ann.richLinkMetadata;\n      const id = meta && meta.driveLinkData && meta.driveLinkData.driveDataRef && meta.driveLinkData.driveDataRef.driveFileId;\n      if (id && !anexos.some(a => a.drive_file_id === id)) {\n        anexos.push({ nome: meta.uri || '', tipo_arquivo: meta.driveLinkData.mimeType || '', chat_resource: '', drive_file_id: id });\n      }\n    }\n\n    mensagens.push({\n      message_id: m.name,\n      space_id: esp.space_id,\n      space_nome: esp.nome,\n      setor: esp.setor,\n      thread_name: m.thread ? m.thread.name : '',\n      e_resposta_dentro_de_conversa: !!m.threadReply,\n      autor: m.sender ? (m.sender.displayName || m.sender.name) : '',\n      autor_email: (m.sender && m.sender.email) || '',\n      data: m.createTime,\n      texto: texto.slice(0, 6000),\n      anexos\n    });\n  }\n});\n\n// Mais antigas primeiro, e no máximo 20 por vez (para não estourar o limite da IA)\nmensagens.sort((a, b) => (a.data < b.data ? -1 : 1));\nconst lote = mensagens.slice(0, 20);\n\nreturn [{ json: {\n  quantidade_total: mensagens.length,\n  quantidade_neste_lote: lote.length,\n  mensagens: lote,\n  erros,\n  aviso: mensagens.length > lote.length ? 'Ainda há mais mensagens. Processe este lote e chame a ferramenta de novo.' : ''\n} }];"
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Espaços ativos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Espaços ativos": {
+      "main": [
+        [
+          {
+            "node": "Calcular janela",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calcular janela": {
+      "main": [
+        [
+          {
+            "node": "Nenhum espaço ativo?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nenhum espaço ativo?": {
+      "main": [
+        [
+          {
+            "node": "Avisar: sem espaços",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Buscar mensagens no Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar mensagens no Chat": {
+      "main": [
+        [
+          {
+            "node": "Já processadas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Já processadas": {
+      "main": [
+        [
+          {
+            "node": "Montar lista para o agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,84 @@
+{
+  "name": "13-tool-read-trends",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "data",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Métricas",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Comparar com a semana",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// SEM IA: compara o dia pedido (ou o mais recente) com os 5 resumos anteriores, e a semana com a anterior.\n// Não cita ex-colaboradores nem cobra o CEO. Obs.: o resumo de segunda junta sexta a domingo.\n// 28/10: o fechamento do dia chega depois do corte (18h), então \"enviou relatório?\" olha o DIA ÚTIL ANTERIOR\n// (as métricas já contam o relatório no dia a que ele se refere).\nconst EX_COLABORADORES = ['Redacted', 'Redacted', 'Redacted']; // mesma lista da trava de privacidade\nconst fora = p => EX_COLABORADORES.some(n => new RegExp('(^|\\\\s)' + n + '(\\\\s|$)', 'i').test(p)) || /Jos[ée] Redacted/i.test(p);\nconst rows = $input.all().map(i => i.json).filter(r => r.dia && r.pessoa && !fora(r.pessoa));\nif (!rows.length) return [{ json: { resultado: 'Ainda não há métricas registradas.' } }];\nconst dias = [...new Set(rows.map(r => r.dia))].sort();\nconst pedido = String($('Pedido do agente').first().json.data || '').match(/\\d{4}-\\d{2}-\\d{2}/);\nconst hoje = pedido && dias.includes(pedido[0]) ? pedido[0] : dias[dias.length - 1];\nconst antes = dias.filter(d => d < hoje);\nconst ult5 = antes.slice(-5), prev5 = antes.slice(-10, -5);\nconst diaFech = antes[antes.length - 1];\nconst baseFech = antes.slice(-6, -1);\nconst br = d => d ? d.slice(8, 10) + '/' + d.slice(5, 7) : '';\nconst soma = (f, campo) => rows.filter(f).reduce((s, r) => s + Number(r[campo] || 0), 0);\nconst linhas = [];\n// Pessoas\nconst pessoas = [...new Set(rows.map(r => r.pessoa))];\nconst alertas = [], destaques = [];\nfor (const p of pessoas) {\n  const msgHoje = soma(r => r.pessoa === p && r.dia === hoje, 'mensagens');\n  const relHoje = soma(r => r.pessoa === p && r.dia === hoje, 'relatorios');\n  if (diaFech) {\n    const relFech = soma(r => r.pessoa === p && r.dia === diaFech, 'relatorios');\n    const diasComRel = baseFech.filter(d => soma(r => r.pessoa === p && r.dia === d, 'relatorios') > 0).length;\n    if (diasComRel >= 3 && relFech === 0) alertas.push(p + ': costuma enviar relatório/fechamento (' + diasComRel + ' dos ' + baseFech.length + ' dias anteriores) e NÃO enviou o de ' + br(diaFech) + '.');\n    else if (diasComRel >= 4 && relFech > 0) destaques.push(p + ': fechamento de ' + br(diaFech) + ' enviado (' + (diasComRel + 1) + ' de ' + (baseFech.length + 1) + ' dias).');\n  }\n  const mediaMsg = ult5.length ? soma(r => r.pessoa === p && ult5.includes(r.dia), 'mensagens') / ult5.length : 0;\n  if (mediaMsg >= 3 && msgHoje === 0 && relHoje === 0) alertas.push(p + ': sem mensagens hoje (média ' + mediaMsg.toFixed(1).replace('.', ',') + '/dia).');\n}\n// Espaços: hoje x média, semana x semana anterior\nconst espacos = [...new Set(rows.map(r => r.espaco))];\nconst esp = [];\nfor (const e of espacos) {\n  const h = soma(r => r.espaco === e && r.dia === hoje, 'mensagens');\n  const m = ult5.length ? soma(r => r.espaco === e && ult5.includes(r.dia), 'mensagens') / ult5.length : 0;\n  const s1 = soma(r => r.espaco === e && (ult5.includes(r.dia) || r.dia === hoje), 'mensagens');\n  const s0 = soma(r => r.espaco === e && prev5.includes(r.dia), 'mensagens');\n  if (m >= 3 && (h <= m * 0.5 || h >= m * 1.5)) esp.push(e + ': ' + h + ' mensagens hoje × média ' + m.toFixed(1).replace('.', ',') + (h < m ? ' (queda)' : ' (alta)') + '.');\n  if (prev5.length >= 3 && s0 >= 10 && (s1 <= s0 * 0.6 || s1 >= s0 * 1.4)) esp.push(e + ': semana com ' + s1 + ' mensagens × ' + s0 + ' na semana anterior.');\n}\nlinhas.push('TENDÊNCIA (dia ' + hoje + ' comparado com ' + ult5.length + ' resumos anteriores; métricas sem IA, só mensagens em espaços). Fechamentos: checado o de ' + br(diaFech) + ' (o de hoje chega depois do corte das 18h e NÃO deve ser cobrado):');\nlinhas.push(alertas.length ? 'ATENÇÃO:\\n- ' + alertas.slice(0, 8).join('\\n- ') : 'ATENÇÃO: nada fora do padrão.');\nif (destaques.length) linhas.push('CONSTÂNCIA:\\n- ' + destaques.slice(0, 6).join('\\n- '));\nif (esp.length) linhas.push('ESPAÇOS:\\n- ' + esp.slice(0, 6).join('\\n- '));\nlinhas.push('Use como sinal, não como prova: pode ter sido enviado por outro canal. Confirme no resumo do dia antes de cobrar.');\nreturn [{ json: { resultado: linhas.join('\\n').slice(0, 3000) } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Métricas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Métricas": {
+      "main": [
+        [
+          {
+            "node": "Comparar com a semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

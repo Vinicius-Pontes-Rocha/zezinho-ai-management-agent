@@ -1,0 +1,282 @@
+{
+  "name": "22-weekly-evolution-summary",
+  "nodes": [
+    {
+      "name": "Segunda 8h",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Avaliações da semana",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "createdAt",
+              "condition": "gte",
+              "keyValue": "={{ $now.minus({ days: 7 }).toISO() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Rodar agora",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Consumo de IA",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Regras novas",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "categoria",
+              "condition": "eq",
+              "keyValue": "preferencia_do_gestor"
+            },
+            {
+              "keyName": "createdAt",
+              "condition": "gte",
+              "keyValue": "={{ $now.minus({ days: 7 }).toISO() }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "n8n - erros da semana",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "<N8N_HOST_URL>",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "n8nApi",
+        "options": {}
+      },
+      "credentials": {
+        "n8nApi": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "n8nApi"
+        }
+      }
+    },
+    {
+      "name": "Montar resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// SEM IA: números da semana do Zezinho (últimos 7 dias).\nconst desde = $now.minus({ days: 7 });\nconst av = $('Avaliações da semana').all().map(i => i.json).filter(r => r.id);\nconst NOMES = { relatorio_diario: 'Relatório diário', avaliacao_reuniao: 'Feedback de reunião', resposta: 'Respostas a menções', avaliacao_relatorio: 'Avaliação de relatório' };\nconst linhas = [];\nfor (const [tipo, nome] of Object.entries(NOMES)) {\n  const r = av.filter(x => x.tipo === tipo);\n  if (!r.length) continue;\n  const c = s => r.filter(x => x.status === s).length;\n  const notas = r.map(x => Number(x.nota)).filter(n => n > 0 && tipo !== 'avaliacao_relatorio');\n  const media = notas.length ? (notas.reduce((a, b) => a + b, 0) / notas.length).toFixed(1).replace('.', ',') : '—';\n  const decididos = c('aprovado') + c('publicado_auto') + c('rejeitado');\n  const taxa = decididos ? Math.round((c('aprovado') + c('publicado_auto')) / decididos * 100) + '%' : '—';\n  linhas.push('• *' + nome + '*: ' + r.length + ' | ✅ ' + c('aprovado') + ' | 🤖 auto ' + c('publicado_auto') + ' | ❌ ' + c('rejeitado') + ' | ⏳ ' + c('pendente') + ' | expirou ' + c('expirado') + ' | aprovação ' + taxa + (tipo !== 'avaliacao_relatorio' ? ' | juiz ' + media : ''));\n}\nconst cons = $('Consumo de IA').all().map(i => i.json).filter(r => r.dia);\nconst semana = cons.filter(r => r.dia >= desde.toFormat('yyyy-MM-dd'));\nconst soma = l => l.reduce((s, r) => s + Number(r.custo_brl || 0), 0);\nconst brl = v => 'R$ ' + v.toFixed(2).replace('.', ',');\nconst porOrigem = {};\nsemana.forEach(r => { porOrigem[r.origem] = (porOrigem[r.origem] || 0) + Number(r.custo_brl || 0); });\nconst regrasNovas = $('Regras novas').all().map(i => i.json).filter(r => r.descricao).map(r => '• ' + String(r.descricao).slice(0, 160));\nconst ex = ((($('n8n - erros da semana').first() || {}).json || {}).data || []).filter(e => new Date(e.startedAt) >= new Date(desde.toISO()));\nconst errosPorFluxo = {};\nex.forEach(e => { errosPorFluxo[e.workflowId] = (errosPorFluxo[e.workflowId] || 0) + 1; });\nconst conteudo = [\n  '*Aprovações (7 dias)*',\n  linhas.length ? linhas.join('\\n') : '• Nada enviado para aprovação.',\n  '',\n  '*Custo da semana (registrado):* ' + brl(soma(semana)) + Object.entries(porOrigem).map(([o, v]) => ' | ' + o + ' ' + brl(v)).join('') + '\\n_Relatório = estimado; confira o real no AI Studio. Total desde a compra: ' + brl(soma(cons)) + ' de R$ 70._',\n  '',\n  '*Regras novas aprendidas:* ' + regrasNovas.length + (regrasNovas.length ? '\\n' + regrasNovas.slice(0, 6).join('\\n') : ''),\n  '',\n  '*Erros nos fluxos:* ' + (ex.length ? ex.length + ' (' + Object.entries(errosPorFluxo).map(([w, n]) => w + ': ' + n).join(', ') + ')' : 'nenhum'),\n  '',\n  '_Meta da nota 9: ≥ 90% aprovado sem correção por 2-3 semanas. Peça ao Claude: \"revisão semanal do Zezinho\"._'\n].join('\\n');\nreturn [{ json: { titulo: '📈 Zezinho — semana até ' + $now.setZone('America/Sao_Paulo').toFormat('dd/MM'), conteudo } }];"
+      }
+    },
+    {
+      "name": "Enviar no privado",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "titulo": "={{ $json.titulo }}",
+            "conteudo": "={{ $json.conteudo }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "conteudo",
+              "displayName": "conteudo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Segunda 8h": {
+      "main": [
+        [
+          {
+            "node": "Avaliações da semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Avaliações da semana": {
+      "main": [
+        [
+          {
+            "node": "Consumo de IA",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rodar agora": {
+      "main": [
+        [
+          {
+            "node": "Avaliações da semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consumo de IA": {
+      "main": [
+        [
+          {
+            "node": "Regras novas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regras novas": {
+      "main": [
+        [
+          {
+            "node": "n8n - erros da semana",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "n8n - erros da semana": {
+      "main": [
+        [
+          {
+            "node": "Montar resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar resumo": {
+      "main": [
+        [
+          {
+            "node": "Enviar no privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,308 @@
+{
+  "name": "21-eval-build-test-set",
+  "nodes": [
+    {
+      "name": "Iniciar",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {}
+    },
+    {
+      "name": "Drive - últimos resumos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "'<ID>' in parents and name contains 'Chats REDACTED' and trashed = false"
+            },
+            {
+              "name": "orderBy",
+              "value": "createdTime desc"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            },
+            {
+              "name": "pageSize",
+              "value": "10"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Um por resumo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "return ($input.first().json.files || []).map(f => ({ json: f }));"
+      }
+    },
+    {
+      "name": "Drive - ler resumo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ \"https://www.googleapis.com/drive/v3/files/\" + $json.id + \"/export?mimeType=text/plain\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "conteudo"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Montar pedido",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const nome = $('Um por resumo').item.json.name;\nconst prompt = 'Você monta um PROVÃO para testar um gestor de IA de um escritório de contabilidade (REDACTED). Leia o resumo de chats abaixo e crie EXATAMENTE de 3 a 4 casos de teste (só menos se o resumo tiver menos de 3 assuntos úteis).\\n'\n + 'Cada caso = uma pergunta que alguém da equipe faria ao gestor + a resposta certa, tirada do próprio resumo. Vale:\\n'\n + '(a) pergunta real feita no chat e respondida por outra pessoa (ex.: \"Martinelli está ligando, aconteceu algo?\" + o que a equipe respondeu);\\n'\n + '(b) fato importante escrito no chat que a equipe consultaria depois: prazo, responsável, decisão do CEO, status de um cliente, onde algo está registrado, regra fiscal/DP/societária citada.\\n'\n + 'Ignore: assuntos pessoais ou de RH de colaboradores, saídas/desligamentos, salários, mensagens do espaço teste agente de ia, mensagens automáticas de ATA.\\n'\n + 'A pergunta deve ser autossuficiente (cite cliente/assunto e data se precisar). resposta_certa = fiel ao texto, curta, com o essencial (datas, nomes, números). Não invente.\\n'\n + 'Responda SOMENTE JSON: [{\"pergunta\": \"...\", \"resposta_certa\": \"...\", \"quem_respondeu\": \"primeiro nome de quem escreveu a informação\", \"setor\": \"Contábil|Fiscal|DP|Legalização|CS|Comercial|Geral\"}].\\n\\n'\n + 'RESUMO (' + nome + '):\\n' + String($json.conteudo || '').slice(0, 60000);\nreturn { json: { nome, body: { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } } } };"
+      }
+    },
+    {
+      "name": "Gemini - extrair casos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpHeaderAuth"
+        }
+      }
+    },
+    {
+      "name": "Juntar casos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const nomes = $('Montar pedido').all().map(i => i.json.nome);\nconst out = [];\nconst vistos = new Set();\n$input.all().forEach((it, i) => {\n  let lista = [];\n  try { lista = JSON.parse(it.json.candidates[0].content.parts.map(p => p.text || '').join('')); } catch (e) {}\n  for (const c of (Array.isArray(lista) ? lista : [])) {\n    if (!c || !c.pergunta || !c.resposta_certa) continue;\n    const chave = String(c.pergunta).toLowerCase().slice(0, 60);\n    if (vistos.has(chave)) continue;\n    vistos.add(chave);\n    out.push({ json: { pergunta: String(c.pergunta), resposta_certa: String(c.resposta_certa), quem_respondeu: String(c.quem_respondeu || ''), setor: String(c.setor || 'Geral'), fonte: nomes[i] || '' } });\n  }\n});\nreturn out.slice(0, 30);"
+      }
+    },
+    {
+      "name": "Gravar no provão",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "pergunta": "={{ $json.pergunta }}",
+            "resposta_certa": "={{ $json.resposta_certa }}",
+            "quem_respondeu": "={{ $json.quem_respondeu }}",
+            "setor": "={{ $json.setor }}",
+            "fonte": "={{ $json.fonte }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "pergunta",
+              "displayName": "pergunta",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resposta_certa",
+              "displayName": "resposta_certa",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quem_respondeu",
+              "displayName": "quem_respondeu",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fonte",
+              "displayName": "fonte",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    }
+  ],
+  "connections": {
+    "Iniciar": {
+      "main": [
+        [
+          {
+            "node": "Drive - últimos resumos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - últimos resumos": {
+      "main": [
+        [
+          {
+            "node": "Um por resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Um por resumo": {
+      "main": [
+        [
+          {
+            "node": "Drive - ler resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - ler resumo": {
+      "main": [
+        [
+          {
+            "node": "Montar pedido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar pedido": {
+      "main": [
+        [
+          {
+            "node": "Gemini - extrair casos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini - extrair casos": {
+      "main": [
+        [
+          {
+            "node": "Juntar casos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juntar casos": {
+      "main": [
+        [
+          {
+            "node": "Gravar no provão",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

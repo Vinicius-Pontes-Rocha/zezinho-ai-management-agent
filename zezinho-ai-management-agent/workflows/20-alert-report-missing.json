@@ -1,0 +1,164 @@
+{
+  "name": "20-alert-report-missing",
+  "nodes": [
+    {
+      "name": "Seg-sex 18h40",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "40 18 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Último relatório diário",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "tipo",
+              "condition": "eq",
+              "keyValue": "relatorio_diario"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 5,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      }
+    },
+    {
+      "name": "Saiu hoje?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "jsCode": "// O relatório das 18h10 usa message_id 'relatorio-AAAA-MM-DD' com a data dos chats (= hoje).\nconst hoje = $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd');\nconst linhas = $input.all().map(i => i.json).filter(l => l.message_id);\nif (linhas.some(l => l.message_id === 'relatorio-' + hoje)) return [];\nconst u = linhas[0];\nconst ultimo = u ? 'O último foi o ' + u.message_id + ' (status: ' + (u.status || '?') + ').' : 'Nenhum relatório diário encontrado ainda.';\nreturn [{ json: { texto: '⚠️ *Alerta do Zezinho*\\nO relatório diário de gestão das 18h10 NÃO chegou para aprovação hoje (' + hoje + '). ' + ultimo + '\\nVerifique o agente Gestor Contábil IA no n8n (tarefa das 18h10) ou se o saldo de créditos do Gemini acabou.' } }];"
+      }
+    },
+    {
+      "name": "Achar privado do Redacted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "url": "https://chat.googleapis.com/v1/spaces:findDirectMessage?name=users/<EMAIL>",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Avisar no privado",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $json.name }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Saiu hoje?').first().json.texto }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Último relatório diário": {
+      "main": [
+        [
+          {
+            "node": "Saiu hoje?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Saiu hoje?": {
+      "main": [
+        [
+          {
+            "node": "Achar privado do Redacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achar privado do Redacted": {
+      "main": [
+        [
+          {
+            "node": "Avisar no privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seg-sex 18h40": {
+      "main": [
+        [
+          {
+            "node": "Último relatório diário",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

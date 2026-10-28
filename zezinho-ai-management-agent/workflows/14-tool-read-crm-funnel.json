@@ -1,0 +1,176 @@
+{
+  "name": "14-tool-read-crm-funnel",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "mes",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Funis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://crm.rdstation.com/api/v1/deal_pipelines",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpQueryAuth"
+        }
+      }
+    },
+    {
+      "name": "Funil REDACTED",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "jsCode": "// Conta RD é compartilhada (Redacted, Redacted...): usar só o funil da REDACTED.\nconst p = $input.all().map(i => i.json).find(x => (x.name || '').toUpperCase().includes('REDACTED'));\nif (!p) throw new Error('Funil REDACTED CONTABILIDADE não encontrado no RD.');\nreturn [{ json: { pipelineId: p.id, nome: p.name, etapas: (p.deal_stages || []).map(s => s.id) } }];"
+      }
+    },
+    {
+      "name": "Negociações",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://crm.rdstation.com/api/v1/deals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "deal_pipeline_id",
+              "value": "={{ $json.pipelineId }}"
+            },
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpQueryAuth"
+        }
+      }
+    },
+    {
+      "name": "Resumo do funil",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "jsCode": "// Sem IA: números do funil REDACTED no mês pedido (AAAA-MM; vazio = mês atual) + o que está aberto agora.\nlet mes = '';\ntry { mes = String($('Pedido do agente').first().json.mes || '').trim(); } catch (e) {}\nconst tz = 'America/Sao_Paulo';\nconst agora = new Date();\nconst mesAtual = agora.toLocaleDateString('en-CA', { timeZone: tz }).slice(0, 7);\nif (!/^\\d{4}-\\d{2}$/.test(mes)) mes = mesAtual;\nconst hoje = agora.toLocaleDateString('en-CA', { timeZone: tz });\nconst dia = d => d ? new Date(d).toLocaleDateString('en-CA', { timeZone: tz }) : '';\nconst brl = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });\nconst valor = d => Number(d.amount_total || 0) || Number(d.amount_montly || 0) + Number(d.amount_unique || 0);\nconst etapas = new Set($('Funil REDACTED').first().json.etapas);\nconst r = $input.first().json;\nconst todas = (r.deals || []).filter(d => etapas.has(d.deal_stage && d.deal_stage.id));\nconst noMes = d => dia(d.closed_at).slice(0, 7) === mes;\nconst ganhas = todas.filter(d => d.win === true && noMes(d));\nconst perdidas = todas.filter(d => d.win === false && noMes(d));\nconst criadas = todas.filter(d => dia(d.created_at).slice(0, 7) === mes);\nconst abertas = todas.filter(d => d.win === null || d.win === undefined);\nconst porEtapa = {};\nabertas.forEach(d => { const n = (d.deal_stage && d.deal_stage.name) || '?'; porEtapa[n] = (porEtapa[n] || 0) + 1; });\nconst porVendedor = {};\nganhas.forEach(d => { const n = (d.user && d.user.name) || '?'; porVendedor[n] = porVendedor[n] || { vendas: 0, valor: 0 }; porVendedor[n].vendas++; porVendedor[n].valor += valor(d); });\nconst motivos = {};\nperdidas.forEach(d => { const m = (d.deal_lost_reason && d.deal_lost_reason.name) || 'sem motivo registrado'; motivos[m] = (motivos[m] || 0) + 1; });\nconst diasParado = d => d.updated_at ? Math.floor((agora - new Date(d.updated_at)) / 86400000) : null;\nreturn [{ json: {\n  funil: 'REDACTED CONTABILIDADE (RD CRM)',\n  mes,\n  aviso: r.has_more ? 'ATENÇÃO: o RD tem mais de 200 negociações neste funil; números podem estar incompletos.' : '',\n  ganhas_no_mes: ganhas.length,\n  valor_ganho_no_mes: brl(ganhas.reduce((s, d) => s + valor(d), 0)),\n  ganhas_hoje: ganhas.filter(d => dia(d.closed_at) === hoje).map(d => d.name),\n  perdidas_no_mes: perdidas.length,\n  motivos_de_perda: motivos,\n  negociacoes_criadas_no_mes: criadas.length,\n  vendas_por_vendedor: Object.entries(porVendedor).map(([n, v]) => n + ': ' + v.vendas + ' venda(s), ' + brl(v.valor)),\n  abertas_agora: abertas.length,\n  abertas_por_etapa: porEtapa,\n  abertas_sem_proxima_tarefa: abertas.filter(d => !d.next_task).map(d => ({ negociacao: d.name, etapa: d.deal_stage && d.deal_stage.name, responsavel: d.user && d.user.name, dias_sem_mexer: diasParado(d) })),\n  ultimas_ganhas: ganhas.sort((a, b) => new Date(b.closed_at) - new Date(a.closed_at)).slice(0, 8).map(d => dia(d.closed_at).split('-').reverse().slice(0, 2).join('/') + ' — ' + d.name + ' — ' + brl(valor(d)) + ' — ' + ((d.user && d.user.name) || '?')),\n  observacao: 'Leitura direta do RD, sem IA. O Comercial às vezes lança a venda pontual direto como ganha (sem passar pelo funil), então poucas negociações abertas é normal.'\n} }];"
+      }
+    },
+    {
+      "name": "Teste manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Funis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Funis": {
+      "main": [
+        [
+          {
+            "node": "Funil REDACTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Funil REDACTED": {
+      "main": [
+        [
+          {
+            "node": "Negociações",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negociações": {
+      "main": [
+        [
+          {
+            "node": "Resumo do funil",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Teste manual": {
+      "main": [
+        [
+          {
+            "node": "Funis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

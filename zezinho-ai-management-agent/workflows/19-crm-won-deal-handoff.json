@@ -1,0 +1,497 @@
+{
+  "name": "19-crm-won-deal-handoff",
+  "nodes": [
+    {
+      "name": "A cada 30 min (seg-sex 8-18h)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/30 8-18 * * 1-5"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Funis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://crm.rdstation.com/api/v1/deal_pipelines",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "options": {}
+      },
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpQueryAuth"
+        }
+      }
+    },
+    {
+      "name": "Funil REDACTED",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "jsCode": "// Conta RD é compartilhada (Redacted, Redacted...): usar só o funil da REDACTED.\nconst p = $input.all().map(i => i.json).find(x => (x.name || '').toUpperCase().includes('REDACTED'));\nif (!p) throw new Error('Funil REDACTED CONTABILIDADE não encontrado no RD.');\nreturn [{ json: { pipelineId: p.id, nome: p.name, etapas: (p.deal_stages || []).map(s => s.id) } }];"
+      }
+    },
+    {
+      "name": "Negociações ganhas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.3,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://crm.rdstation.com/api/v1/deals",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpQueryAuth",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "deal_pipeline_id",
+              "value": "={{ $json.pipelineId }}"
+            },
+            {
+              "name": "win",
+              "value": "true"
+            },
+            {
+              "name": "limit",
+              "value": "200"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "httpQueryAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpQueryAuth"
+        }
+      }
+    },
+    {
+      "name": "Vendas recentes (4 dias)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "jsCode": "// Só vendas ganhas nos últimos 4 dias (cobre fim de semana; evita avisar as antigas); a tabela de avisadas tira as repetidas.\nconst etapas = new Set($('Funil REDACTED').first().json.etapas);\nconst limite = Date.now() - 4 * 86400000;\nconst brl = v => Number(v || 0).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });\nconst fmt = d => new Date(d).toLocaleDateString('pt-BR', { timeZone: 'America/Sao_Paulo' });\nconst deals = ($input.first().json.deals || []).filter(d => d.win === true && etapas.has(d.deal_stage && d.deal_stage.id));\nconst out = [];\nfor (const d of deals) {\n  const quando = d.closed_at || d.updated_at;\n  if (!quando || new Date(quando).getTime() < limite) continue;\n  const cliente = (d.organization && d.organization.name) || d.name;\n  // \"Valor da oportunidade\" é o produto genérico do RD: não diz o serviço\n  const servicos = (d.deal_products || []).map(p => p.name).filter(n => n && !/valor da oportunidade/i.test(n)).join(', ');\n  const mensal = Number(d.amount_montly || 0);\n  const unico = Number(d.amount_unique || 0);\n  const valor = mensal || unico || Number(d.amount_total || 0);\n  const valorTxt = [mensal ? brl(mensal) + '/mês' : '', unico ? brl(unico) + ' (único)' : ''].filter(Boolean).join(' + ') || (valor ? brl(valor) : 'não informado');\n  const vendedor = (d.user && d.user.name) || 'não informado';\n  const contato = ((d.contacts || [])[0] || {}).name;\n  const texto = '*🎉 Nova venda fechada!*\\n'\n    + '• *Negociação:* ' + (d.organization && d.organization.name ? d.organization.name + ' — ' : '') + d.name + '\\n'\n    + (servicos ? '• *Serviço:* ' + servicos + '\\n' : '')\n    + '• *Valor:* ' + valorTxt + '\\n'\n    + (contato ? '• *Contato:* ' + contato + '\\n' : '')\n    + '• *Vendedor(a):* ' + vendedor + '\\n'\n    + '• *Fechado em:* ' + fmt(quando) + '\\n\\n'\n    + '👉 CS: iniciar o onboarding.';\n  out.push({ json: { deal_id: String(d.id || d._id), cliente, vendedor, valor, ganha_em: fmt(quando), texto } });\n}\nreturn out;"
+      }
+    },
+    {
+      "name": "Ainda não avisadas",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "rowNotExists",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "deal_id",
+              "condition": "eq",
+              "keyValue": "={{ $json.deal_id }}"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Enviar para aprovação",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.2,
+      "position": [
+        1344,
+        96
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_id": "={{ \"venda-\" + $('Ainda não avisadas').item.json.deal_id }}",
+            "space_id": "spaces/<SPACE_ID>",
+            "space_nome": "REDACTED | Comercial & CS",
+            "thread_name": "",
+            "autor": "Zezinho",
+            "setor": "CS",
+            "tipo": "aviso_venda_cs",
+            "titulo_relatorio": "={{ \"Venda ganha — \" + $('Ainda não avisadas').item.json.cliente }}",
+            "nota": 0,
+            "pontos_fortes": "",
+            "riscos": "",
+            "melhorias": "",
+            "contexto": "={{ \"Venda ganha no RD (funil REDACTED), deal \" + $('Ainda não avisadas').item.json.deal_id }}",
+            "resposta": "={{ $('Ainda não avisadas').item.json.texto }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_id",
+              "displayName": "space_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_nome",
+              "displayName": "space_nome",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_name",
+              "displayName": "thread_name",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "autor",
+              "displayName": "autor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "titulo_relatorio",
+              "displayName": "titulo_relatorio",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nota",
+              "displayName": "nota",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pontos_fortes",
+              "displayName": "pontos_fortes",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "riscos",
+              "displayName": "riscos",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "melhorias",
+              "displayName": "melhorias",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contexto",
+              "displayName": "contexto",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resposta",
+              "displayName": "resposta",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        },
+        "mode": "each"
+      }
+    },
+    {
+      "name": "Registrar avisada",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "deal_id": "={{ $('Ainda não avisadas').item.json.deal_id }}",
+            "cliente": "={{ $('Ainda não avisadas').item.json.cliente }}",
+            "vendedor": "={{ $('Ainda não avisadas').item.json.vendedor }}",
+            "valor": "={{ $('Ainda não avisadas').item.json.valor }}",
+            "ganha_em": "={{ $('Ainda não avisadas').item.json.ganha_em }}",
+            "avisado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "deal_id",
+              "displayName": "deal_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cliente",
+              "displayName": "cliente",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vendedor",
+              "displayName": "vendedor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "valor",
+              "displayName": "valor",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ganha_em",
+              "displayName": "ganha_em",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "avisado_em",
+              "displayName": "avisado_em",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Teste manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        192
+      ],
+      "parameters": {}
+    }
+  ],
+  "connections": {
+    "A cada 30 min (seg-sex 8-18h)": {
+      "main": [
+        [
+          {
+            "node": "Funis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Funis": {
+      "main": [
+        [
+          {
+            "node": "Funil REDACTED",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Funil REDACTED": {
+      "main": [
+        [
+          {
+            "node": "Negociações ganhas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Negociações ganhas": {
+      "main": [
+        [
+          {
+            "node": "Vendas recentes (4 dias)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Teste manual": {
+      "main": [
+        [
+          {
+            "node": "Funis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Vendas recentes (4 dias)": {
+      "main": [
+        [
+          {
+            "node": "Ainda não avisadas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ainda não avisadas": {
+      "main": [
+        [
+          {
+            "node": "Registrar avisada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar avisada": {
+      "main": [
+        [
+          {
+            "node": "Enviar para aprovação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

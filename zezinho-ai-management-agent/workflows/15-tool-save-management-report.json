@@ -1,0 +1,247 @@
+{
+  "name": "15-tool-save-management-report",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "titulo",
+              "type": "string"
+            },
+            {
+              "name": "conteudo",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Drive - achar pasta Relatórios",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "name = 'Relatórios de gestão' and mimeType = 'application/vnd.google-apps.folder' and '<ID>' in parents and trashed = false"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Pasta já existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.files || []).length > 0 }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Drive - salvar relatório (Google Docs)",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "createFromText",
+        "content": "={{ $('Pedido do agente').first().json.conteudo }}",
+        "name": "={{ $('Pedido do agente').first().json.titulo || ('Relatório de gestão — ' + $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd')) }}",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        },
+        "options": {
+          "convertToGoogleDocument": true
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Devolver link",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "r",
+              "name": "resultado",
+              "value": "={{ 'Relatório salvo: <GOOGLE_URL>' + $json.id + '/edit' }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Drive - criar pasta Relatórios",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        672,
+        80
+      ],
+      "parameters": {
+        "resource": "folder",
+        "operation": "create",
+        "name": "Relatórios de gestão",
+        "driveId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DRIVEID>"
+        },
+        "folderId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FOLDERID>"
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Drive - achar pasta Relatórios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - achar pasta Relatórios": {
+      "main": [
+        [
+          {
+            "node": "Pasta já existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pasta já existe?": {
+      "main": [
+        [
+          {
+            "node": "Drive - salvar relatório (Google Docs)",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drive - criar pasta Relatórios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - salvar relatório (Google Docs)": {
+      "main": [
+        [
+          {
+            "node": "Devolver link",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - criar pasta Relatórios": {
+      "main": [
+        [
+          {
+            "node": "Drive - salvar relatório (Google Docs)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

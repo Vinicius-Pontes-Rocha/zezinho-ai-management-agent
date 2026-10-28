@@ -1,0 +1,297 @@
+{
+  "name": "17-pending-task-follow-up",
+  "nodes": [
+    {
+      "name": "Relatório publicado",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "resposta",
+              "type": "string"
+            },
+            {
+              "name": "message_id",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Pendências vencidas (sem IA)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Lê as linhas \"⏳ ... desde dd/mm ...\" do relatório publicado e fica com as abertas há 2+ dias úteis.\n// Nunca cobra ex-colaboradores (mesma lista da trava de privacidade) nem o CEO. No máximo 5 por dia.\nconst EX_COLABORADORES = ['Redacted', 'Redacted', 'Redacted'];\nconst txt = String($input.first().json.resposta || '');\nconst hoje = $now.setZone('America/Sao_Paulo').startOf('day');\nconst diasUteis = d => { let n = 0, x = d.startOf('day'); while (x < hoje) { x = x.plus({ days: 1 }); if (x.weekday <= 5) n++; } return n; };\nconst out = [];\nfor (const raw of txt.split('\\n')) {\n  if (!raw.includes('⏳')) continue;\n  const linha = raw.replace(/^[\\s•*_]*⏳\\s*/, '').trim();\n  const d = linha.match(/desde\\s+(\\d{1,2})\\/(\\d{1,2})/i);\n  if (!d) continue;\n  let dt = DateTime.fromObject({ year: hoje.year, month: Number(d[2]), day: Number(d[1]) }, { zone: 'America/Sao_Paulo' });\n  if (dt > hoje) dt = dt.minus({ years: 1 });\n  const idade = diasUteis(dt);\n  if (idade < 2) continue;\n  if (EX_COLABORADORES.some(n => new RegExp('(^|[^\\\\wÀ-ÿ])' + n + '($|[^\\\\wÀ-ÿ])', 'i').test(linha))) continue;\n  if (/Jos[ée] Redacted|\\bCEO\\b/i.test(linha)) continue;\n  const espaco = ((linha.match(/\\[([^,\\]]+),/) || [])[1] || '').trim();\n  const partes = linha.replace(/\\[[^\\]]*\\]/g, '').split(/\\s+[—-]\\s+/).map(s => s.trim()).filter(Boolean);\n  const pendencia = String(partes[0] || '').replace(/[.;*]+$/, '');\n  const dono = String(partes.find((p, i) => i > 0 && !/desde|segue|aberta/i.test(p)) || '').replace(/[.;*]+$/, '');\n  out.push({ json: { pendencia, desde: d[1].padStart(2, '0') + '/' + d[2].padStart(2, '0'), idade, espaco, dono } });\n}\nreturn out.slice(0, 5);"
+      }
+    },
+    {
+      "name": "Montar pedido de aprovação",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const itens = $input.all().map(i => i.json);\nconst linhas = itens.map((p, i) => (i + 1) + '. *' + p.pendencia + '* — aberta desde ' + p.desde + ' (' + p.idade + ' dias úteis)' + (p.dono ? ' — ' + p.dono : '') + '\\n   → vai para: ' + (p.espaco || 'REDACTED | Geral (espaço não identificado)'));\nreturn [{ json: { texto: '🤖 *Zezinho — cobranças propostas* (' + itens.length + ')\\nPendências do relatório abertas há 2+ dias úteis. Se aprovar, publico uma cobrança educada no espaço de cada uma:\\n\\n' + linhas.join('\\n') } }];"
+      }
+    },
+    {
+      "name": "Achar privado do Redacted",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "url": "https://chat.googleapis.com/v1/spaces:findDirectMessage?name=users/<EMAIL>",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Pedir aprovação das cobranças",
+      "type": "n8n-nodes-base.googleChat",
+      "typeVersion": 1,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "authentication": "oAuth2",
+        "operation": "sendAndWait",
+        "spaceId": "={{ $json.name }}",
+        "message": "={{ $('Montar pedido de aprovação').first().json.texto }}",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double",
+            "approveLabel": "✅ Enviar cobranças",
+            "disapproveLabel": "❌ Não enviar"
+          }
+        },
+        "options": {
+          "limitWaitTime": {
+            "values": {
+              "resumeAmount": 1,
+              "resumeUnit": "days"
+            }
+          },
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Aprovou?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ !!($json.data && $json.data.approved === true) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Listar espaços",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "url": "https://chat.googleapis.com/v1/spaces?pageSize=200",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Preparar cobranças",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Acha o espaço pelo nome; sem nome conhecido, vai para o REDACTED | Geral.\n// Saudação só com primeiros nomes de pessoas (tira setor: \"Redacted / Comercial\" → \"Redacted\").\nconst GERAL = 'spaces/<SPACE_ID>';\nconst SETORES = /^(comercial|cs|fiscal|cont[aá]bil|dp|rh|legaliza[cç][aã]o|societ[aá]rio|financeiro|operacional|equipe|setor|ti|marketing)$/i;\nconst lista = ($input.first().json.spaces || []);\nconst limpa = s => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();\nreturn $('Pendências vencidas (sem IA)').all().map(i => {\n  const p = i.json;\n  const esp = lista.find(s => limpa(s.displayName) === limpa(p.espaco));\n  const nomes = String(p.dono || '').split(/[\\/,;&]|\\se\\s/).map(s => s.trim().split(/\\s+/)[0]).filter(n => n && /^[A-ZÀ-Ý][a-zà-ÿ]+$/.test(n) && !SETORES.test(n));\n  const quem = nomes.length ? 'Oi, ' + [...new Set(nomes)].join(' e ') + '! ' : 'Oi, pessoal! ';\n  return { json: { space: esp ? esp.name : GERAL, text: '🤖 *Zezinho*\\n' + quem + 'Passando para lembrar: *' + p.pendencia + '* está aberta desde ' + p.desde + '. Consegue atualizar aqui o andamento até amanhã? Se já resolveu, é só responder com ✅. Obrigado!' } };\n});"
+      }
+    },
+    {
+      "name": "Publicar cobrança",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1792,
+        0
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "={{ \"https://chat.googleapis.com/v1/\" + $json.space + \"/messages\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $json.text }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Relatório publicado": {
+      "main": [
+        [
+          {
+            "node": "Pendências vencidas (sem IA)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pendências vencidas (sem IA)": {
+      "main": [
+        [
+          {
+            "node": "Montar pedido de aprovação",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar pedido de aprovação": {
+      "main": [
+        [
+          {
+            "node": "Achar privado do Redacted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achar privado do Redacted": {
+      "main": [
+        [
+          {
+            "node": "Pedir aprovação das cobranças",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pedir aprovação das cobranças": {
+      "main": [
+        [
+          {
+            "node": "Aprovou?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aprovou?": {
+      "main": [
+        [
+          {
+            "node": "Listar espaços",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Listar espaços": {
+      "main": [
+        [
+          {
+            "node": "Preparar cobranças",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Preparar cobranças": {
+      "main": [
+        [
+          {
+            "node": "Publicar cobrança",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

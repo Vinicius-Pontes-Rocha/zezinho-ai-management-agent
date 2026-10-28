@@ -1,0 +1,172 @@
+{
+  "name": "11-tool-read-chat-digest",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "data",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Montar busca",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Procura o doc \"Chats REDACTED — AAAA-MM-DD\" na pasta Zezinho (Drive do Redacted). Sem data = o mais recente.\nconst PASTA = '<ID>';\nconst m = String($input.first().json.data || '').match(/\\d{4}-\\d{2}-\\d{2}/);\nlet q = \"'\" + PASTA + \"' in parents and name contains 'Chats REDACTED' and trashed = false\";\nif (m) q += \" and name contains '\" + m[0] + \"'\";\nreturn [{ json: { q, data: m ? m[0] : '' } }];"
+      }
+    },
+    {
+      "name": "Drive - achar resumo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.q }}"
+            },
+            {
+              "name": "orderBy",
+              "value": "createdTime desc"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            },
+            {
+              "name": "pageSize",
+              "value": "1"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - ler resumo (texto)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ ($json.files || []).length ? \"https://www.googleapis.com/drive/v3/files/\" + $json.files[0].id + \"/export?mimeType=text/plain\" : \"https://www.googleapis.com/drive/v3/about?fields=kind\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "conteudo"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Formatar resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const achados = $('Drive - achar resumo').first().json.files || [];\nconst pedido = $('Montar busca').first().json.data;\nif (!achados.length) return [{ json: { resultado: 'Nenhum resumo de chats encontrado' + (pedido ? ' para ' + pedido : '') + '. Os resumos saem às 7h, de segunda a sexta (o de segunda cobre sexta a domingo).' } }];\nconst r = $input.first().json;\nlet c = String(r.conteudo || '');\nif (!c && r.error) c = '(erro ao ler: ' + JSON.stringify(r.error).slice(0, 200) + ')';\nconst MAX = 60000;\nif (c.length > MAX) c = c.slice(0, MAX) + '\\n... (resumo cortado em 60 mil caracteres)';\nreturn [{ json: { resultado: 'DOCUMENTO: ' + achados[0].name + '\\n\\n' + c } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Montar busca",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar busca": {
+      "main": [
+        [
+          {
+            "node": "Drive - achar resumo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - achar resumo": {
+      "main": [
+        [
+          {
+            "node": "Drive - ler resumo (texto)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - ler resumo (texto)": {
+      "main": [
+        [
+          {
+            "node": "Formatar resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

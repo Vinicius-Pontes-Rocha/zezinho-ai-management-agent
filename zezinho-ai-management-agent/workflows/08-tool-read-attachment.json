@@ -1,0 +1,553 @@
+{
+  "name": "08-tool-read-attachment",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        480
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "nome",
+              "type": "string"
+            },
+            {
+              "name": "chat_resource",
+              "type": "string"
+            },
+            {
+              "name": "drive_file_id",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "É arquivo do Drive?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        224,
+        480
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.drive_file_id || \"\" }}",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Baixar do Drive",
+      "type": "n8n-nodes-base.googleDrive",
+      "typeVersion": 3,
+      "position": [
+        448,
+        384
+      ],
+      "parameters": {
+        "resource": "file",
+        "operation": "download",
+        "authentication": "oAuth2",
+        "fileId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<FILEID>"
+        },
+        "options": {
+          "binaryPropertyName": "data",
+          "googleFileConversion": {
+            "conversion": {
+              "docsToFormat": "text/plain",
+              "sheetsToFormat": "text/csv",
+              "slidesToFormat": "application/pdf",
+              "drawingsToFormat": "application/pdf"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Identificar tipo do arquivo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        480
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Descobre se o arquivo é PDF, planilha, texto, imagem...\n// pelo \"mimeType\" (tipo do arquivo) ou pela extensão do nome.\nconst item = $input.first();\nconst bin = item.binary && item.binary.data;\nconst nome = $('Pedido do agente').first().json.nome || (bin && bin.fileName) || '';\n\n// Se não veio arquivo, o download falhou\nif (!bin) {\n  const erro = item.json.error ? JSON.stringify(item.json.error).slice(0, 300) : 'arquivo não foi baixado';\n  return [{ json: { formato: 'erro', nome, erro } }];\n}\n\nconst mime = (bin.mimeType || '').toLowerCase();\nconst ext = String(bin.fileName || nome).toLowerCase().split('.').pop();\n\nlet formato = 'outro';\nif (mime.includes('pdf') || ext === 'pdf') formato = 'pdf';\nelse if (mime.includes('spreadsheetml') || ext === 'xlsx') formato = 'xlsx';\nelse if (mime.includes('ms-excel') || ext === 'xls') formato = 'xls';\nelse if (mime.includes('csv') || ext === 'csv') formato = 'csv';\nelse if (mime.startsWith('text/') || ['txt', 'md'].includes(ext)) formato = 'texto';\nelse if (mime.startsWith('image/')) formato = 'imagem';\n\nreturn [{ json: { formato, nome, mime, erro: '' }, binary: item.binary }];"
+      }
+    },
+    {
+      "name": "Baixar anexo do Chat",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        576
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "=https://chat.googleapis.com/v1/media/{{ $json.chat_resource }}?alt=media",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "file",
+              "outputPropertyName": "data"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Qual formato?",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        896,
+        416
+      ],
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "outputKey": "pdf",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.formato }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "pdf"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "xlsx",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.formato }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "xlsx"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "xls",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.formato }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "xls"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "csv",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.formato }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "csv"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "outputKey": "texto",
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.formato }}",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "rightValue": "texto"
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra",
+          "renameFallbackOutput": "Não suportado"
+        }
+      }
+    },
+    {
+      "name": "Ler PDF",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "data",
+        "options": {
+          "joinPages": true
+        }
+      }
+    },
+    {
+      "name": "Formatar conteúdo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        384
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Transforma o que foi extraído em um texto só, que a IA consegue ler.\n// PDF vem em \"text\", texto vem em \"data\" e planilha vem como 1 item por linha.\nconst itens = $input.all();\nconst nome = $('Identificar tipo do arquivo').first().json.nome;\nconst primeiro = itens[0] ? itens[0].json : {};\nlet conteudo = '';\n\nif (primeiro.error) {\n  conteudo = 'Erro ao ler o arquivo: ' + JSON.stringify(primeiro.error).slice(0, 300);\n} else if (typeof primeiro.text === 'string') {\n  conteudo = primeiro.text.trim() || '(PDF sem texto: provavelmente é escaneado/imagem. Avalie só pelo que a mensagem diz.)';\n} else if (typeof primeiro.data === 'string') {\n  conteudo = primeiro.data;\n} else {\n  // Planilha: monta uma tabela simples \"coluna | coluna | coluna\"\n  const colunas = Object.keys(primeiro);\n  const limite = 500;\n  const linhas = itens.slice(0, limite).map(i => colunas.map(c => String(i.json[c] ?? '')).join(' | '));\n  conteudo = colunas.join(' | ') + '\\n' + linhas.join('\\n');\n  if (itens.length > limite) conteudo += '\\n... (' + (itens.length - limite) + ' linhas a mais não mostradas)';\n}\n\nconst MAX = 40000; // limite de caracteres para não gastar demais\nconst truncado = conteudo.length > MAX;\nreturn [{ json: { nome, conteudo: conteudo.slice(0, MAX), truncado, aviso: truncado ? 'Conteúdo cortado em 40 mil caracteres.' : '' } }];"
+      }
+    },
+    {
+      "name": "Ler XLSX",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "operation": "xlsx",
+        "binaryPropertyName": "data",
+        "options": {
+          "headerRow": true
+        }
+      }
+    },
+    {
+      "name": "Ler XLS",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        384
+      ],
+      "parameters": {
+        "operation": "xls",
+        "binaryPropertyName": "data",
+        "options": {
+          "headerRow": true
+        }
+      }
+    },
+    {
+      "name": "Ler CSV",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        576
+      ],
+      "parameters": {
+        "operation": "csv",
+        "binaryPropertyName": "data",
+        "options": {
+          "headerRow": true,
+          "relaxQuotes": true
+        }
+      }
+    },
+    {
+      "name": "Ler texto",
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [
+        1120,
+        768
+      ],
+      "parameters": {
+        "operation": "text",
+        "binaryPropertyName": "data",
+        "destinationKey": "data"
+      }
+    },
+    {
+      "name": "Avisar formato não lido",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1120,
+        960
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "n",
+              "name": "nome",
+              "value": "={{ $json.nome }}",
+              "type": "string"
+            },
+            {
+              "id": "c",
+              "name": "conteudo",
+              "value": "={{ 'Não consegui ler este arquivo automaticamente (formato: ' + $json.formato + ($json.mime ? ', ' + $json.mime : '') + '). ' + ($json.erro || '') + ' Avalie só pelo texto da mensagem e, se for um relatório, sugira enviar em PDF ou planilha.' }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "É arquivo do Drive?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É arquivo do Drive?": {
+      "main": [
+        [
+          {
+            "node": "Baixar do Drive",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Baixar anexo do Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar do Drive": {
+      "main": [
+        [
+          {
+            "node": "Identificar tipo do arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Identificar tipo do arquivo": {
+      "main": [
+        [
+          {
+            "node": "Qual formato?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Baixar anexo do Chat": {
+      "main": [
+        [
+          {
+            "node": "Identificar tipo do arquivo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Qual formato?": {
+      "main": [
+        [
+          {
+            "node": "Ler PDF",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler XLSX",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler XLS",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler CSV",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Ler texto",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Avisar formato não lido",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler PDF": {
+      "main": [
+        [
+          {
+            "node": "Formatar conteúdo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler XLSX": {
+      "main": [
+        [
+          {
+            "node": "Formatar conteúdo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler XLS": {
+      "main": [
+        [
+          {
+            "node": "Formatar conteúdo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler CSV": {
+      "main": [
+        [
+          {
+            "node": "Formatar conteúdo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ler texto": {
+      "main": [
+        [
+          {
+            "node": "Formatar conteúdo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

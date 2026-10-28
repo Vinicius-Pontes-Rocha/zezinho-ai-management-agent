@@ -1,0 +1,192 @@
+{
+  "name": "09-tool-read-knowledge-base",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "busca",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Montar busca",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Monta a busca no Drive do Redacted (cofre Obsidian em Meu Drive/Zezinho/Cérebro REDACTED).\n// Sem termo (ou \"mapa\") = abre o \"00 Mapa do cérebro\", que lista todas as notas.\nlet termo = String($input.first().json.busca || '').trim().replace(/\\.md$/i, '');\nif (!termo || /^mapa/i.test(termo)) termo = '00 Mapa do cérebro';\nconst t = termo.replace(/\\\\/g, '').replace(/'/g, \"\\\\'\");\nconst q = \"(name contains '\" + t + \"' or fullText contains '\" + t + \"') and name contains '.md' and trashed = false and mimeType != 'application/vnd.google-apps.folder'\";\nreturn [{ json: { termo, q } }];"
+      }
+    },
+    {
+      "name": "Drive - buscar notas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.q }}"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,modifiedTime)"
+            },
+            {
+              "name": "pageSize",
+              "value": "20"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Escolher até 3 notas",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Prioriza notas cujo NOME tem o termo; depois as que só citam o termo no texto.\nconst termo = $('Montar busca').first().json.termo.toLowerCase();\nconst arquivos = ($input.first().json.files || []).filter(f => f.name.toLowerCase().endsWith('.md'));\nconst peso = f => { const n = f.name.toLowerCase().replace(/\\.md$/, ''); return n === termo ? 0 : n.includes(termo) ? 1 : 2; };\narquivos.sort((a, b) => peso(a) - peso(b));\nconst escolhidos = arquivos.slice(0, 3);\nif (!escolhidos.length) return [{ json: { vazio: true, termo } }];\nreturn escolhidos.map(f => ({ json: { vazio: false, id: f.id, nome: f.name.replace(/\\.md$/, ''), atualizado: f.modifiedTime, outros: arquivos.slice(3, 15).map(o => o.name.replace(/\\.md$/, '')) } }));"
+      }
+    },
+    {
+      "name": "Drive - ler nota",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.vazio ? \"https://www.googleapis.com/drive/v3/about?fields=kind\" : \"https://www.googleapis.com/drive/v3/files/\" + $json.id + \"?alt=media\" }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "conteudo"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Formatar resposta",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Junta as notas num texto só para o agente (limite para não gastar tokens à toa).\nconst escolhidos = $('Escolher até 3 notas').all().map(i => i.json);\nconst lidos = $input.all().map(i => i.json);\nif (escolhidos[0].vazio) {\n  return [{ json: { resultado: 'Nenhuma nota encontrada para \"' + escolhidos[0].termo + '\". Leia o mapa (busca vazia ou \"mapa\") para ver os nomes das notas e tente de novo com outra palavra.' } }];\n}\nconst MAX_NOTA = 12000;\nlet texto = '';\nescolhidos.forEach((n, i) => {\n  let c = String((lidos[i] || {}).conteudo || '');\n  if (!c && lidos[i] && lidos[i].error) c = '(erro ao ler: ' + JSON.stringify(lidos[i].error).slice(0, 200) + ')';\n  if (c.length > MAX_NOTA) c = c.slice(0, MAX_NOTA) + '\\n... (nota cortada)';\n  texto += '===== NOTA: ' + n.nome + ' (atualizada ' + String(n.atualizado || '').slice(0, 10) + ') =====\\n' + c + '\\n\\n';\n});\nconst outros = escolhidos[0].outros || [];\nif (outros.length) texto += 'Outras notas que também citam o termo: ' + outros.join(', ');\nreturn [{ json: { resultado: texto } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Montar busca",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar busca": {
+      "main": [
+        [
+          {
+            "node": "Drive - buscar notas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - buscar notas": {
+      "main": [
+        [
+          {
+            "node": "Escolher até 3 notas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escolher até 3 notas": {
+      "main": [
+        [
+          {
+            "node": "Drive - ler nota",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - ler nota": {
+      "main": [
+        [
+          {
+            "node": "Formatar resposta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

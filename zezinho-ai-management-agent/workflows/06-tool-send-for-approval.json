@@ -1,0 +1,1281 @@
+{
+  "name": "06-tool-send-for-approval",
+  "nodes": [
+    {
+      "name": "Receber do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "message_id",
+              "type": "string"
+            },
+            {
+              "name": "space_id",
+              "type": "string"
+            },
+            {
+              "name": "space_nome",
+              "type": "string"
+            },
+            {
+              "name": "thread_name",
+              "type": "string"
+            },
+            {
+              "name": "autor",
+              "type": "string"
+            },
+            {
+              "name": "setor",
+              "type": "string"
+            },
+            {
+              "name": "tipo",
+              "type": "string"
+            },
+            {
+              "name": "titulo_relatorio",
+              "type": "string"
+            },
+            {
+              "name": "nota",
+              "type": "number"
+            },
+            {
+              "name": "pontos_fortes",
+              "type": "string"
+            },
+            {
+              "name": "riscos",
+              "type": "string"
+            },
+            {
+              "name": "melhorias",
+              "type": "string"
+            },
+            {
+              "name": "contexto",
+              "type": "string"
+            },
+            {
+              "name": "resposta",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Salvar avaliação pendente",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        320
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "insert",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "message_id": "={{ $json.message_id }}",
+            "space_id": "={{ $json.space_id }}",
+            "thread_id": "={{ $json.thread_name }}",
+            "autor": "={{ $json.autor }}",
+            "setor": "={{ $json.setor }}",
+            "tipo": "={{ $json.tipo }}",
+            "titulo_relatorio": "={{ $json.titulo_relatorio }}",
+            "nota": "={{ $json.nota }}",
+            "pontos_fortes": "={{ $json.pontos_fortes }}",
+            "riscos": "={{ $json.riscos }}",
+            "melhorias": "={{ $json.melhorias }}",
+            "resposta_proposta": "={{ $json.resposta }}",
+            "status": "pendente",
+            "criado_em": "={{ $now.toISO() }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_id",
+              "displayName": "space_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_id",
+              "displayName": "thread_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "autor",
+              "displayName": "autor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "titulo_relatorio",
+              "displayName": "titulo_relatorio",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nota",
+              "displayName": "nota",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pontos_fortes",
+              "displayName": "pontos_fortes",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "riscos",
+              "displayName": "riscos",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "melhorias",
+              "displayName": "melhorias",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resposta_proposta",
+              "displayName": "resposta_proposta",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "criado_em",
+              "displayName": "criado_em",
+              "type": "dateTime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Disparar aprovação (sem esperar)",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1120,
+        320
+      ],
+      "parameters": {
+        "mode": "each",
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "row_id": "={{ $json.id }}",
+            "space_id": "={{ $('Receber do agente').item.json.space_id }}",
+            "space_nome": "={{ $('Receber do agente').item.json.space_nome }}",
+            "thread_name": "={{ $('Receber do agente').item.json.thread_name }}",
+            "setor": "={{ $('Receber do agente').item.json.setor }}",
+            "autor": "={{ $('Receber do agente').item.json.autor }}",
+            "tipo": "={{ $('Receber do agente').item.json.tipo }}",
+            "titulo": "={{ $('Receber do agente').item.json.titulo_relatorio }}",
+            "nota": "={{ $('Receber do agente').item.json.nota }}",
+            "contexto": "={{ $('Precisa corrigir?').item.json.contexto }}",
+            "resposta": "={{ $('Precisa corrigir?').item.json.resposta }}",
+            "aprovador_email": "={{ $json.aprovador_email }}",
+            "auto": "={{ $json.auto === true }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "row_id",
+              "displayName": "row_id",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_id",
+              "displayName": "space_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "space_nome",
+              "displayName": "space_nome",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "thread_name",
+              "displayName": "thread_name",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "setor",
+              "displayName": "setor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "autor",
+              "displayName": "autor",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nota",
+              "displayName": "nota",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contexto",
+              "displayName": "contexto",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "resposta",
+              "displayName": "resposta",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "aprovador_email",
+              "displayName": "aprovador_email",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "auto",
+              "displayName": "auto",
+              "type": "boolean",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "name": "Resposta para o agente",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1344,
+        320
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "r",
+              "name": "resultado",
+              "value": "={{ 'OK: resposta enviada para aprovação humana (avaliação nº ' + $('Salvar avaliação pendente').item.json.id + '). Ela só será publicada se o aprovador clicar em Publicar. Não envie de novo para esta mensagem.' }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Aprovadores",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        320
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Uma aprovação por pessoa; quem aprovar primeiro publica.\n// Menções do espaço de teste vão só para o Redacted, EXCETO quando quem mencionou foi o CEO (contexto com '|ceo]'):\n// aí vai para os dois, para o CEO poder testar sem depender do Redacted. O relatório diário vai para os dois.\n// Feedback de reunião (pós-ATA) e aviso de venda ganha ao CS (26/10, sem IA): só o Redacted confere por enquanto.\n// 27/10 PILOTO CS/Comercial: respostas a menções em qualquer espaço → só o Redacted (CEO só quando ele mesmo mencionou).\n// Modo automático (26/10): publica direto e manda cópia só para o Redacted.\n// TRAVA (26/10): mensagem para fora da REDACTED (cliente/terceiro: tipo 'mensagem_externa' ou destino que não é espaço do Chat)\n// vai SEMPRE para o CEO e nunca é automática.\nconst APROVADORES = ['<EMAIL>', '<EMAIL>'];\nconst CEO = APROVADORES[1];\nconst ESPACO_TESTE = 'spaces/<SPACE_ID>';\nconst SO_REDACTED = ['avaliacao_reuniao', 'aviso_venda_cs'];\nconst MENCOES = ['resposta', 'avaliacao_relatorio'];\nconst ctx = $('Precisa corrigir?').all().map(i => String(i.json.contexto || ''));\nconst out = [];\n$input.all().forEach((item, i) => {\n  const externo = item.json.tipo === 'mensagem_externa' || !String(item.json.space_id || '').startsWith('spaces/');\n  const auto = item.json.auto === true && !externo;\n  const doCeo = /\\|ceo\\]/.test(ctx[i] || '');\n  const soTeste = item.json.space_id === ESPACO_TESTE && item.json.tipo !== 'relatorio_diario' && !doCeo;\n  const mencaoPiloto = MENCOES.includes(item.json.tipo) && !doCeo;\n  const soRedacted = !externo && (auto || soTeste || mencaoPiloto || SO_REDACTED.includes(item.json.tipo));\n  const lista = externo ? [CEO] : (soRedacted ? APROVADORES.slice(0, 1) : APROVADORES);\n  for (const email of lista) out.push({ json: { ...item.json, auto, aprovador_email: email }, pairedItem: { item: i } });\n});\nreturn out;"
+      }
+    },
+    {
+      "name": "Último relatório aprovado",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        220
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "tipo",
+              "condition": "eq",
+              "keyValue": "relatorio_diario"
+            },
+            {
+              "keyName": "status",
+              "condition": "eq",
+              "keyValue": "aprovado"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 2,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      }
+    },
+    {
+      "name": "Revisor",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        220
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// REVISOR SEM IA: só olha o relatório diário. Outros tipos passam direto.\n// 1ª vez com problema: devolve ao agente para corrigir. 2ª vez (contexto começa com [revisado]): segue com os avisos.\nconst r0 = $('Receber do agente').first().json;\nif (r0.tipo !== 'relatorio_diario') return [{ json: { ...r0, corrigir: false } }];\n// 27/10: o que vem depois da linha \"🔒 SÓ CEO\" é a parte reservada (só no privado); o resto é o texto da equipe.\nconst partes = String(r0.resposta || '').split(/\\n[ \\t*_]*🔒\\s*S[ÓO] CEO[*_:]*[ \\t]*/i);\nconst r = { ...r0, resposta: partes[0].trim(), parte_ceo: partes.slice(1).join('\\n').trim() };\nconst txt = r.resposta;\nconst probs = [];\nif (/o dia foi marcado|dia marcado por|o dia focou|volume moderado|intensas defini/i.test(txt)) probs.push('Frase genérica proibida (\"o dia foi marcado por\", \"o dia focou em\"...). Troque por números e fatos.');\nconst dp = txt.match(/\\b(VT|vale[- ]?transporte|vale[- ]?refei\\w*|Flash|benef[ií]cios?|sal[aá]rios?|f[eé]rias|atestado|advert[eê]ncia|ponto eletr[oô]nico)\\b/gi);\nif (dp) probs.push('Possível DP interno da REDACTED (' + [...new Set(dp.map(x => x.toLowerCase()))].join(', ') + '). Se for de funcionário da REDACTED, REMOVA (nem como elogio). Se for de cliente, deixe claro o nome do cliente.');\nif (/CEO deveria|sugiro ao CEO|recomend\\w* (ao|para o) CEO/i.test(txt)) probs.push('Recomendação dirigida ao CEO: proibido. Fale com a equipe.');\nif (txt.length > 3300) probs.push('Texto da equipe passou de 3.300 caracteres (' + txt.length + '). Corte o menos importante (a parte 🔒 SÓ CEO não conta).');\nfor (let n = 1; n <= 7; n++) if (!new RegExp('\\\\*' + n + '\\\\.').test(txt)) probs.push('Falta a seção ' + n + ' do formato.');\n// 27/10: o relatório costuma ser aprovado no dia seguinte, então \"hoje/amanhã\" fica errado. Só data fixa.\nconst rel = txt.match(/\\b(hoje|amanh[ãa])\\b/gi);\nif (rel) probs.push('Data relativa (' + [...new Set(rel.map(x => x.toLowerCase()))].join(', ') + '): o relatório pode ser publicado no dia seguinte. Use sempre data fixa dd/mm.');\nconst semPrazo = txt.split('\\n').filter(l => l.includes('💡') && !/\\d{1,2}\\/\\d{1,2}|esta semana|at[ée] (sexta|segunda|ter[çc]a|quarta|quinta|o fim)/i.test(l.split('💡')[1] || ''));\nif (semPrazo.length) probs.push('Feedback 💡 sem ação com prazo: ' + semPrazo.map(l => l.trim().slice(0, 60)).join(' | ') + '. Cada 💡 precisa de ação concreta + prazo (dd/mm ou esta semana).');\n// Decisões repetidas do último relatório aprovado\nconst secao = (t, a, b) => { const i = t.indexOf('*' + a + '.'); const j = t.indexOf('*' + b + '.'); return i < 0 ? '' : t.slice(i, j > i ? j : undefined); };\nconst palavras = s => new Set((s.toLowerCase().match(/[a-zà-ÿ0-9]{4,}/g) || []));\nconst anterior = $('Último relatório aprovado').all().map(i => i.json).find(x => x.message_id && x.message_id !== r.message_id);\nif (anterior) {\n  const antes = secao(String(anterior.resposta_proposta || ''), 4, 5).split('\\n').filter(l => l.includes('•')).map(palavras);\n  secao(txt, 4, 5).split('\\n').filter(l => l.includes('•')).forEach(l => {\n    const p = palavras(l); if (p.size < 3) return;\n    for (const a of antes) { let c = 0; p.forEach(w => { if (a.has(w)) c++; }); if (c / p.size >= 0.6) { probs.push('Decisão parece repetida do relatório ' + anterior.message_id + ': \"' + l.trim().slice(0, 80) + '\". Só entra decisão tomada no dia.'); break; } }\n  });\n}\nconst revisado = /^\\[revisado\\]/i.test(String(r.contexto || ''));\nif (probs.length && !revisado) return [{ json: { ...r, corrigir: true, problemas: probs } }];\nreturn [{ json: { ...r, corrigir: false, contexto: String(r.contexto || '') + (probs.length ? ' | ⚠️ Revisor ainda vê: ' + probs.join(' / ') : (revisado ? ' | ✅ Revisor: corrigido' : ' | ✅ Revisor: ok')) } }];"
+      }
+    },
+    {
+      "name": "Precisa corrigir?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        220
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.corrigir }}",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              },
+              "rightValue": ""
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Devolver ao agente",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        672,
+        120
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "d",
+              "name": "resultado",
+              "value": "={{ 'NÃO ENVIADO: o revisor automático achou problemas no relatório. Corrija TODOS e chame enviar_para_aprovacao de novo (uma única vez), com o contexto começando por [revisado]. Problemas:\\n- ' + $json.problemas.join('\\n- ') }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Trava de privacidade",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        336,
+        380
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// TRAVA DE PRIVACIDADE SEM IA (26/10): relatório, feedback de reunião e respostas a menções vão para a equipe,\n// então não podem citar saída de colaborador nem ex-colaboradores.\n// 27/10: + assuntos SENSÍVEIS (inadimplência, distrato, bancos, cortes de custo): no relatório vão para a parte \"🔒 SÓ CEO\";\n// nos outros tipos o aviso 🔒 tira do modo automático e pede conferência.\n// 28/10: + não pagou / devendo / em atraso / valores em aberto / acordo / renegociação / alinhamento contratual (caso JS Metal).\n// \"Pendências em aberto\" sozinho NÃO dispara (é título de seção).\nconst EX_COLABORADORES = ['Redacted', 'Redacted', 'Redacted']; // atualizar quando alguém sair (também em ler_tendencia e cobrança)\nconst SENSIVEL = /inadimpl\\w*|distratos?|rescis[ãa]o|d[ií]vidas?|d[ée]bitos? (com a REDACTED|de honor\\w*)|cobran[çc]a judicial|protesto|honor[aá]rios? (em atraso|atrasados?|n[ãa]o pagos?|pendentes?|em aberto|vencidos?)|(boletos?|mensalidades?|parcelas?|pagamentos?|faturas?|valores?) (em aberto|em atraso|atrasad[oa]s?|vencid[oa]s?|n[ãa]o pag[oa]s?)|n[ãa]o (pagou|pagaram|est[áa] pagando|efetuou o pagamento)|devend[oa]|em atraso com|atras\\w* (no|nos|com o|com os) pagamentos?|acordo de pagamento|tentativa de acordo|renegocia\\w*|alinhamento contratual|operador banc\\w*|conta banc\\w*|\\bIta[úu]\\b|Bradesco|Santander|cortes? de (custos?|ferramentas|sistemas)|cancelamento d[oae]s? (sistemas?|ferramentas?|contrato|Data for Company)|rentabilidade/gi;\nconst item = $input.first().json;\nif (!['relatorio_diario', 'avaliacao_reuniao', 'resposta', 'avaliacao_relatorio'].includes(item.tipo)) return [{ json: item }];\nconst txt = String(item.resposta || '');\nconst achados = [];\nconst priv = txt.match(/deslig\\w*|demiss\\w*|demiti\\w*|saiu da (empresa|REDACTED)|encerr\\w* (o |seu )?ciclo|[úu]ltimo dia (dela|dele|na REDACTED)|despedid\\w*/gi);\nif (priv) achados.push('Possível assunto privado de colaborador (' + [...new Set(priv.map(x => x.toLowerCase()))].join(', ') + '). Se for de funcionário da REDACTED, REMOVA: o relatório vai para a equipe toda. Se for de cliente, deixe claro o nome do cliente.');\nconst ex = EX_COLABORADORES.filter(n => new RegExp('(^|[^\\\\wÀ-ÿ])' + n + '($|[^\\\\wÀ-ÿ])', 'i').test(txt));\nif (ex.length) achados.push('Cita ex-colaborador (' + ex.join(', ') + '): não cobrar, não dar feedback e não citar. Pendência dele(a) vira \"equipe do setor assume\".');\nconst sens = txt.match(SENSIVEL);\nif (sens) achados.push('Assunto sensível no texto para a equipe (' + [...new Set(sens.map(x => x.toLowerCase()))].join(', ') + '). ' + (item.tipo === 'relatorio_diario' ? 'Tire do texto da equipe e coloque no FIM, depois de uma linha \"🔒 SÓ CEO\" (vai só no privado do CEO). No texto da equipe, no máximo \"N clientes em risco de retenção — detalhes com o CEO\".' : 'Confira se pode sair no grupo.'));\nif (!achados.length) return [{ json: item }];\n// Só o relatório diário (agente) pode refazer; os outros tipos só avisam o aprovador.\nconst revisado = item.tipo !== 'relatorio_diario' || /^\\[revisado\\]/i.test(String(item.contexto || ''));\nif (!revisado) return [{ json: { ...item, corrigir: true, problemas: [...(item.problemas || []), ...achados] } }];\nreturn [{ json: { ...item, corrigir: false, contexto: '🔒 PRIVACIDADE — confira antes de aprovar: ' + achados.join(' / ') + ' | ' + String(item.contexto || '') } }];"
+      }
+    },
+    {
+      "name": "É relatório diário?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        784,
+        -200
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $('Receber do agente').item.json.tipo }}",
+              "rightValue": "relatorio_diario",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Registrar custo do relatório",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1008,
+        -200
+      ],
+      "parameters": {
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "dia": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd') }}",
+            "origem": "relatorio",
+            "quem": "Zezinho",
+            "tipo": "relatorio_diario",
+            "modelo": "gemini-3.5-flash (estimado)",
+            "tokens_entrada": 0,
+            "tokens_saida": 0,
+            "custo_brl": 0.2,
+            "message_id": "={{ $('Receber do agente').item.json.message_id }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "dia",
+              "displayName": "dia",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "origem",
+              "displayName": "origem",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quem",
+              "displayName": "quem",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tipo",
+              "displayName": "tipo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "modelo",
+              "displayName": "modelo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_entrada",
+              "displayName": "tokens_entrada",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "tokens_saida",
+              "displayName": "tokens_saida",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "custo_brl",
+              "displayName": "custo_brl",
+              "type": "number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "message_id",
+              "displayName": "message_id",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ]
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Consumo do mês",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        1232,
+        -200
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "dia",
+              "condition": "ilike",
+              "keyValue": "={{ $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM') + '%' }}"
+            }
+          ]
+        },
+        "returnAll": true
+      }
+    },
+    {
+      "name": "Montar aviso de custo",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1456,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Resumo de custo do Zezinho só para o Redacted. Relatório = valor ESTIMADO (R$ 0,20 no Gemini 3.5 Flash desde 26/10;\n// calibrar com o AI Studio depois de 1 semana); menções e feedback de reunião = valor real medido.\nconst CREDITO = 70;\nconst EST_RELATORIO = 0.2;\nconst rows = $input.all().map(i => i.json).filter(r => r.custo_brl != null);\nconst hoje = $now.setZone('America/Sao_Paulo').toFormat('yyyy-MM-dd');\nconst soma = l => l.reduce((s, r) => s + Number(r.custo_brl || 0), 0);\nconst brl = v => 'R$ ' + v.toFixed(2).replace('.', ',');\nconst mes = soma(rows);\nconst conteudo = [\n  '• Relatório de hoje: ~' + brl(EST_RELATORIO) + ' (estimado)',\n  '• Hoje (relatório + menções + reuniões): ' + brl(soma(rows.filter(r => r.dia === hoje))),\n  '• Mês: ' + brl(mes) + ' de ' + brl(CREDITO) + ' (' + (mes / CREDITO * 100).toFixed(1).replace('.', ',') + '%)',\n  '_Só Zezinho. Valor real (com ATA e cartões): AI Studio → Gasto._'\n].join('\\n');\nreturn [{ json: { titulo: '💰 Custo de IA — ' + $now.setZone('America/Sao_Paulo').toFormat('dd/MM'), conteudo } }];"
+      }
+    },
+    {
+      "name": "Enviar custo no privado",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1680,
+        -200
+      ],
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<WORKFLOWID>"
+        },
+        "workflowInputs": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "titulo": "={{ $json.titulo }}",
+            "conteudo": "={{ $json.conteudo }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "titulo",
+              "displayName": "titulo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "conteudo",
+              "displayName": "conteudo",
+              "type": "string",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": true
+        },
+        "options": {
+          "waitForSubWorkflow": false
+        }
+      }
+    },
+    {
+      "name": "Precisa de juiz?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        448,
+        420
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 1
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ['relatorio_diario', 'avaliacao_reuniao', 'resposta', 'avaliacao_relatorio'].includes($json.tipo) && $json.corrigir !== true }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      }
+    },
+    {
+      "name": "Regras do gestor",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        672,
+        520
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "categoria",
+              "condition": "eq",
+              "keyValue": "preferencia_do_gestor"
+            },
+            {
+              "keyName": "setor",
+              "condition": "eq",
+              "keyValue": "Geral"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 30,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      }
+    },
+    {
+      "name": "Montar juiz",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// JUIZ (26/10): 1 chamada barata ao Gemini dá nota 0-10 ao texto, com base nas regras do gestor.\n// Critérios por tipo: relatório diário, feedback de reunião e resposta a menção/avaliação.\n// 27/10: mais exigente (conselho genérico, repetição, datas relativas, assunto sensível) — mesma chamada, sem custo extra.\nconst item = $('Trava de privacidade').first().json;\nconst tipo = item.tipo;\nconst reuniao = tipo === 'avaliacao_reuniao';\nconst relatorio = tipo === 'relatorio_diario';\nconst regras = $input.all().map(i => i.json)\n  .filter(r => r.descricao && (relatorio || !/relat[óo]rio di[aá]rio|relat[óo]rio de gest/i.test(String(r.titulo || '') + ' ' + String(r.descricao || '').slice(0, 80))))\n  .map(r => '- ' + String(r.descricao).slice(0, 500)).join('\\n');\nconst PRIV = 'Nada privado: desligamento, saída, saúde, salário ou assunto pessoal de colaborador; nada de ex-colaboradores; nada de valores, CPF ou CNPJ de cliente (falha = nota no máximo 4).';\nconst SENS = 'Nada de inadimplência, distrato, dívida, bancos, cortes de custo ou rentabilidade (o texto vai para a equipe toda; isso é assunto do CEO): falha = nota no máximo 5.';\nconst criterios = relatorio\n  ? `1. Segue TODAS as regras do gestor abaixo (regra descumprida = nota no máximo 6).\\n2. Cada risco, pendência ou decisão tem fonte [espaço, hora, pessoa].\\n3. ${PRIV}\\n4. ${SENS}\\n5. Sem frases genéricas; todo 💡 é ação concreta com prazo em data fixa (dd/mm). \"hoje\"/\"amanhã\" = nota no máximo 7.\\n6. Não repete o mesmo cliente ou assunto em duas seções sem fato novo (repetição = nota no máximo 7).\\n7. Útil para um gestor: aponta o que falta, quem faz e até quando (cita o POP quando couber), e não só resume. Elogio vago (ex.: \"organização das salas\") não conta.`\n  : reuniao\n  ? `1. Segue as regras do gestor abaixo.\\n2. Tudo vem da reunião (nada inventado); não precisa citar hora nem espaço.\\n3. ${PRIV}\\n4. ${SENS}\\n5. 💡 são ações práticas da EQUIPE DA REDACTED para conduzir melhor a próxima reunião, tiradas do que aconteceu NESTA reunião. Conselho genérico que serviria para qualquer reunião (ex.: \"enviar a pauta com antecedência\", \"fechar cada assunto com responsável e prazo\") sem a reunião ter mostrado esse problema = nota no máximo 7.\\n6. Próximos passos têm responsável; \"definir prazo\" é aceitável quando a reunião não definiu.\\n7. Curto, claro e construtivo; elogio vago (\"liderança atuante\", \"boa condução\") sem fato concreto não conta.`\n  : `1. Responde EXATAMENTE ao que foi perguntado (veja o CONTEXTO), sem desviar de assunto.\\n2. Se afirma um fato (data, valor, regra, nome), diz de onde veio (chat de dd/mm, ATA, POP); fato sem fonte ou de OUTRO assunto/cliente = nota no máximo 5.\\n3. Se não sabe, diz claramente e indica quem pode saber (isso é bom, não tire nota).\\n4. ${PRIV}\\n5. ${SENS}\\n6. Curto, direto e educado; segue as regras do gestor abaixo.`;\nconst oQue = relatorio ? 'um RELATÓRIO DIÁRIO DE GESTÃO dos chats' : reuniao ? 'um FEEDBACK DE REUNIÃO' : 'uma RESPOSTA do gestor a uma pergunta/menção da equipe';\nconst prompt = `Você é o revisor de qualidade do Zezinho, gestor de IA da Redacted Contabilidade (REDACTED). Avalie ${oQue} que será publicado no chat interno.\\n\\nDê nota de 0 a 10 pelos critérios:\\n${criterios}\\n10 = impecável (raro); 9 = pode publicar sem mexer; 8 = bom, com detalhe a melhorar; abaixo de 8 = precisa corrigir. Seja exigente, mas não tire nota por algo que o critério não pede.\\n\\nREGRAS DO GESTOR:\\n${regras || '(nenhuma)'}\\n\\nCONTEXTO (o que foi pedido):\\n${String(item.contexto || '').slice(0, 800)}\\n\\nTEXTO:\\n${String(item.resposta || '')}\\n\\nResponda SOMENTE JSON: {\"nota\": número, \"problemas\": [até 5 frases curtas, cada uma dizendo o que corrigir]}`;\nreturn [{ json: { body: { contents: [{ parts: [{ text: prompt }] }], generationConfig: { temperature: 0, responseMimeType: 'application/json' } } } }];"
+      }
+    },
+    {
+      "name": "Juiz (Gemini)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        520
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.body) }}",
+        "options": {}
+      },
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "httpHeaderAuth"
+        }
+      }
+    },
+    {
+      "name": "Aplicar juiz",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        520
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Nota < 8 no relatório diário (1ª vez) → volta ao agente. Os outros tipos e a 2ª vez → seguem com a nota para o aprovador.\n// 28/10: leitura tolerante (cercas ```json, texto antes/depois do JSON); se o JSON vier quebrado, pega só o número de \"nota\".\nconst item = $('Trava de privacidade').first().json;\nlet j = {};\nlet raw = '';\ntry { raw = ($input.first().json.candidates || [])[0].content.parts.map(p => p.text || '').join(''); } catch (e) {}\nconst limpo = String(raw).replace(/```(?:json)?/gi, '').trim();\ntry { j = JSON.parse(limpo); } catch (e) {\n  try { j = JSON.parse(limpo.slice(limpo.indexOf('{'), limpo.lastIndexOf('}') + 1)); } catch (e2) {\n    const m = limpo.match(/\"nota\"\\s*:\\s*(\\d+(?:\\.\\d+)?)/);\n    if (m) j = { nota: Number(m[1]), problemas: [] };\n  }\n}\nconst nota = Number(j.nota);\nif (!Number.isFinite(nota)) return [{ json: { ...item, contexto: String(item.contexto || '') + ' | ⚖️ Juiz: indisponível' } }];\nconst probs = (Array.isArray(j.problemas) ? j.problemas : []).slice(0, 5).map(String);\nconst revisado = item.tipo !== 'relatorio_diario' || /^\\[revisado\\]/i.test(String(item.contexto || ''));\nif (nota < 8 && !revisado) return [{ json: { ...item, corrigir: true, problemas: [...(item.problemas || []), ...probs.map(p => 'Juiz de qualidade (nota ' + nota + '/10): ' + p)] } }];\n// Avaliação de relatório de pessoa usa \"nota\" para a nota da PESSOA: não sobrescreve.\nconst manterNota = item.tipo === 'avaliacao_relatorio';\nreturn [{ json: { ...item, ...(manterNota ? {} : { nota }), contexto: '⚖️ Juiz: ' + nota + '/10' + (nota < 8 ? ' ⚠️ CONFIRA' : '') + (probs.length ? ' — ' + probs.join(' / ') : '') + ' | ' + String(item.contexto || '') } }];"
+      }
+    },
+    {
+      "name": "Histórico do tipo",
+      "type": "n8n-nodes-base.dataTable",
+      "typeVersion": 1.1,
+      "position": [
+        784,
+        320
+      ],
+      "parameters": {
+        "resource": "row",
+        "operation": "get",
+        "dataTableId": {
+          "__rl": true,
+          "mode": "id",
+          "value": "<DATATABLEID>"
+        },
+        "matchType": "allConditions",
+        "filters": {
+          "conditions": [
+            {
+              "keyName": "tipo",
+              "condition": "eq",
+              "keyValue": "={{ $('Receber do agente').first().json.tipo }}"
+            }
+          ]
+        },
+        "returnAll": false,
+        "limit": 15,
+        "orderBy": true,
+        "orderByColumn": "createdAt",
+        "orderByDirection": "DESC"
+      }
+    },
+    {
+      "name": "Modo automático?",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// PUBLICAÇÃO AUTOMÁTICA — 27/10 (decisão do Redacted): TUDO automático, com freios.\n// - Juiz >= 8 (nota do juiz gravada no contexto) e sem aviso 🔒 (privacidade/sensível) nem do revisor.\n// - Nenhuma rejeição (ou 👎) nas últimas 3 decisões do mesmo tipo: um 👎 volta o tipo para aprovação até 3 aprovações seguidas.\n// - Aviso de venda ganha ao CS (sem IA, dados do RD): sempre automático.\n// - 27/10: resposta no PRIVADO DO CEO (só ele lê) sai direto — não faz sentido pedir aprovação ao CEO da resposta para ele mesmo.\n// Mensagem para fora da REDACTED nunca é automática (trava em Aprovadores). Cada publicação automática manda cópia 👍/👎 ao Redacted.\nconst TIPOS = ['relatorio_diario', 'avaliacao_reuniao', 'resposta', 'avaliacao_relatorio'];\nconst SEM_IA = ['aviso_venda_cs'];\nconst DM_CEO = 'spaces/<SPACE_ID>';\nconst JANELA = 3;\nconst salvos = $('Salvar avaliação pendente').all();\nconst atual = $('Precisa corrigir?').first().json;\nconst idAtual = salvos[0] && salvos[0].json.id;\nconst hist = $input.all().map(i => i.json)\n  .filter(r => r.id && r.id !== idAtual && ['aprovado', 'publicado_auto', 'rejeitado'].includes(r.status));\nconst semRejeicao = hist.slice(0, JANELA).every(r => r.status !== 'rejeitado');\nconst ctx = String(atual.contexto || '');\nconst m = ctx.match(/⚖️ Juiz: (\\d+(?:[.,]\\d+)?)/);\nconst juiz = m ? Number(m[1].replace(',', '.')) : NaN;\nconst limpo = !ctx.includes('🔒') && !ctx.includes('Revisor ainda vê');\nconst privadoCeo = atual.space_id === DM_CEO;\nconst auto = privadoCeo || SEM_IA.includes(atual.tipo) || (TIPOS.includes(atual.tipo) && semRejeicao && juiz >= 8 && limpo);\nreturn salvos.map((s, i) => ({ json: { ...s.json, auto }, pairedItem: { item: i } }));"
+      }
+    },
+    {
+      "name": "Parte reservada (CEO)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        784,
+        -60
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// 27/10: a parte \"🔒 SÓ CEO\" do relatório não vai para o Geral: sai só no privado.\n// 28/10: Redacted validou o formato → vai também para o CEO.\nconst ENVIAR_AO_CEO = true;\nconst it = $('Precisa corrigir?').first().json;\nconst p = String(it.parte_ceo || '').trim();\nif (it.tipo !== 'relatorio_diario' || !p) return [];\nconst texto = '🔒 *Zezinho — parte reservada do relatório* (' + (it.titulo_relatorio || '') + ')\\n_Não vai para o Geral._\\n\\n' + p;\nconst emails = ['<EMAIL>'].concat(ENVIAR_AO_CEO ? ['<EMAIL>'] : []);\nreturn emails.map(email => ({ json: { email, texto } }));"
+      }
+    },
+    {
+      "name": "Achar DM (reservado)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1008,
+        -60
+      ],
+      "parameters": {
+        "url": "=https://chat.googleapis.com/v1/spaces:findDirectMessage?name=users/{{ $json.email }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Enviar parte reservada",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1232,
+        -60
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "=https://chat.googleapis.com/v1/{{ $json.name }}/messages",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleChatOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ text: $('Parte reservada (CEO)').item.json.texto }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleChatOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleChatOAuth2Api"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Disparar aprovação (sem esperar)": {
+      "main": [
+        [
+          {
+            "node": "Resposta para o agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Salvar avaliação pendente": {
+      "main": [
+        [
+          {
+            "node": "É relatório diário?",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Histórico do tipo",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Parte reservada (CEO)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aprovadores": {
+      "main": [
+        [
+          {
+            "node": "Disparar aprovação (sem esperar)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Receber do agente": {
+      "main": [
+        [
+          {
+            "node": "Último relatório aprovado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Último relatório aprovado": {
+      "main": [
+        [
+          {
+            "node": "Revisor",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Precisa corrigir?": {
+      "main": [
+        [
+          {
+            "node": "Devolver ao agente",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Salvar avaliação pendente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Revisor": {
+      "main": [
+        [
+          {
+            "node": "Trava de privacidade",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "É relatório diário?": {
+      "main": [
+        [
+          {
+            "node": "Registrar custo do relatório",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar custo do relatório": {
+      "main": [
+        [
+          {
+            "node": "Consumo do mês",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consumo do mês": {
+      "main": [
+        [
+          {
+            "node": "Montar aviso de custo",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar aviso de custo": {
+      "main": [
+        [
+          {
+            "node": "Enviar custo no privado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trava de privacidade": {
+      "main": [
+        [
+          {
+            "node": "Precisa de juiz?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Precisa de juiz?": {
+      "main": [
+        [
+          {
+            "node": "Regras do gestor",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Precisa corrigir?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Regras do gestor": {
+      "main": [
+        [
+          {
+            "node": "Montar juiz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar juiz": {
+      "main": [
+        [
+          {
+            "node": "Juiz (Gemini)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Juiz (Gemini)": {
+      "main": [
+        [
+          {
+            "node": "Aplicar juiz",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aplicar juiz": {
+      "main": [
+        [
+          {
+            "node": "Precisa corrigir?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Histórico do tipo": {
+      "main": [
+        [
+          {
+            "node": "Modo automático?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modo automático?": {
+      "main": [
+        [
+          {
+            "node": "Aprovadores",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parte reservada (CEO)": {
+      "main": [
+        [
+          {
+            "node": "Achar DM (reservado)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Achar DM (reservado)": {
+      "main": [
+        [
+          {
+            "node": "Enviar parte reservada",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

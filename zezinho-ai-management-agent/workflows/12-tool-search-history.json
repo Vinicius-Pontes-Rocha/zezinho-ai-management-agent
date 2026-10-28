@@ -1,0 +1,204 @@
+{
+  "name": "12-tool-search-history",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "inputSource": "workflowInputs",
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "termos",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Montar busca",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Até 4 termos separados por vírgula (variações de nome: \"Redacted, Redacted, Ypiranga\") = documento com QUALQUER um.\n// Separados por & (\"Redacted & Rosemara & Mister\") = documento com TODOS (usado pelas menções, para achar o assunto certo).\n// Busca só Google Docs (ATAs, resumos de chat) e .txt de TRANSCRIÇÃO — arquivos .txt de cliente (ex.: sped.txt) ficam de fora.\nconst bruto = String($input.first().json.termos || '');\nconst todos = bruto.includes('&');\nconst termos = bruto.split(todos ? /&/ : /[,;]/).map(t => t.trim().replace(/['\\\\]/g, '')).filter(Boolean).slice(0, 4);\nif (!termos.length) return [{ json: { vazio: true, termos: [], q: '' } }];\nconst q = '(' + termos.map(t => \"fullText contains '\" + t + \"'\").join(todos ? ' and ' : ' or ') + \") and (mimeType = 'application/vnd.google-apps.document' or (mimeType = 'text/plain' and name contains 'Transcri')) and trashed = false\";\nreturn [{ json: { vazio: false, termos, q } }];"
+      }
+    },
+    {
+      "name": "Drive - buscar documentos",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "={{ $json.q || \"name = '___nada___'\" }}"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name,mimeType,modifiedTime,webViewLink)"
+            },
+            {
+              "name": "pageSize",
+              "value": "20"
+            },
+            {
+              "name": "corpora",
+              "value": "allDrives"
+            },
+            {
+              "name": "includeItemsFromAllDrives",
+              "value": "true"
+            },
+            {
+              "name": "supportsAllDrives",
+              "value": "true"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Escolher os 4 mais recentes",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// O Drive não ordena busca de texto por data, então ordena aqui: resumos de chat e ATAs primeiro, depois o resto; dentro de cada grupo, o mais recente primeiro.\n// Lê até 6 documentos (antes eram 4: o chat certo ficava de fora quando havia muitos documentos recentes).\nconst prioridade = n => /^Chats REDACTED|ATA|\\d{4}-\\d{2}-\\d{2} \\d{2}h\\d{2}/i.test(n) ? 0 : 1;\nconst arquivos = ($input.first().json.files || []).sort((a, b) => (prioridade(a.name) - prioridade(b.name)) || String(b.modifiedTime).localeCompare(String(a.modifiedTime)));\nif (!arquivos.length) return [{ json: { vazio: true } }];\nconst outros = arquivos.slice(6, 15).map(f => f.name + ' (' + String(f.modifiedTime).slice(0, 10) + ')');\nreturn arquivos.slice(0, 6).map(f => ({ json: { vazio: false, id: f.id, nome: f.name, data: String(f.modifiedTime).slice(0, 10), link: f.webViewLink, gdoc: f.mimeType === 'application/vnd.google-apps.document', outros } }));"
+      }
+    },
+    {
+      "name": "Drive - ler documento",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        896,
+        0
+      ],
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $json.vazio ? \"https://www.googleapis.com/drive/v3/about?fields=kind\" : \"https://www.googleapis.com/drive/v3/files/\" + $json.id + ($json.gdoc ? \"/export?mimeType=text/plain\" : \"?alt=media\") + ($json.gdoc ? \"\" : \"&supportsAllDrives=true\") }}",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "conteudo"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Extrair trechos",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "// Para cada documento, pega até 2 trechos (~1.200 caracteres) em volta de onde os termos aparecem JUNTOS (ou do termo mais raro).\n// Compara sem acento e sem maiúscula (\"Redacted\" acha \"REDACTED\").\n// Mostra QUAIS termos aparecem em cada documento, para o agente não atribuir documento de um cliente a outro.\nconst termos = $('Montar busca').first().json.termos;\nconst docs = $('Escolher os 4 mais recentes').all().map(i => i.json);\nconst lidos = $input.all().map(i => i.json);\nif (!termos.length) return [{ json: { resultado: 'Informe pelo menos um termo (ex.: nome do cliente e variações separadas por vírgula).' } }];\nif (docs[0].vazio) return [{ json: { resultado: 'Nada encontrado em ATAs, transcrições ou resumos de chat para: ' + termos.join(', ') + '. Tente variações de grafia, nome da empresa ou do sócio. Se ainda assim não achar, o assunto provavelmente não foi registrado por escrito.' } }];\nconst norm = s => Array.from(String(s)).map(c => (c.normalize('NFD').replace(/[̀-ͯ]/g, '')[0] || c).toLowerCase()).join('');\nconst ts = termos.map(norm);\nlet out = 'Busca por: ' + termos.join(', ') + '\\nATENÇÃO: só ligue um documento a um cliente/pessoa se o NOME dele estiver em \"Termos encontrados\". Documento que só tem palavras genéricas é de OUTRO assunto/cliente.\\n\\n';\ndocs.forEach((d, i) => {\n  const texto = String((lidos[i] || {}).conteudo || '');\n  const n = norm(texto);\n  const achados = termos.filter((t, k) => n.includes(ts[k]));\n  // Posições de cada termo; pontua janelas onde aparecem mais termos diferentes juntos.\n  const pos = [];\n  ts.forEach((t, k) => { let p = n.indexOf(t); let c = 0; while (p >= 0 && c < 40) { pos.push({ p, k }); p = n.indexOf(t, p + t.length); c++; } });\n  const janelas = pos.map(a => ({ p: a.p, score: new Set(pos.filter(b => Math.abs(b.p - a.p) < 900).map(b => b.k)).size })).sort((a, b) => b.score - a.score || a.p - b.p);\n  const escolhidos = [];\n  janelas.forEach(w => { if (escolhidos.length < 2 && escolhidos.every(e => Math.abs(e - w.p) > 1200)) escolhidos.push(w.p); });\n  out += '===== ' + d.nome + ' (' + d.data + ') =====\\nLink: ' + d.link + '\\nTermos encontrados neste documento: ' + (achados.length ? achados.join(', ') : 'NENHUM — não use este documento') + '\\n';\n  if (!texto) out += '(não consegui ler o conteúdo)\\n\\n';\n  else if (!escolhidos.length) out += '(o Drive indicou o termo, mas não achei o trecho exato)\\n\\n';\n  else escolhidos.forEach(p => { out += '... ' + texto.slice(Math.max(0, p - 600), p + 600).replace(/\\s+/g, ' ') + ' ...\\n\\n'; });\n});\nconst outros = docs[0].outros || [];\nif (outros.length) out += 'Outros documentos que citam algum dos termos (sem conferir qual): ' + outros.join('; ');\nreturn [{ json: { resultado: out.slice(0, 20000) } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Montar busca",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar busca": {
+      "main": [
+        [
+          {
+            "node": "Drive - buscar documentos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - buscar documentos": {
+      "main": [
+        [
+          {
+            "node": "Escolher os 4 mais recentes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Escolher os 4 mais recentes": {
+      "main": [
+        [
+          {
+            "node": "Drive - ler documento",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - ler documento": {
+      "main": [
+        [
+          {
+            "node": "Extrair trechos",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}

@@ -1,0 +1,386 @@
+{
+  "name": "10-tool-write-knowledge-base",
+  "nodes": [
+    {
+      "name": "Pedido do agente",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        96
+      ],
+      "parameters": {
+        "workflowInputs": {
+          "values": [
+            {
+              "name": "tipo"
+            },
+            {
+              "name": "titulo"
+            },
+            {
+              "name": "conteudo"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Montar nota",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        96
+      ],
+      "parameters": {
+        "jsCode": "// Zezinho só escreve em 2 pastas do cofre: Diário do Zezinho (1 nota por dia) e Propostas de atualização (1 nota por proposta).\nconst p = $input.first().json;\nconst agora = $now.setZone('America/Sao_Paulo');\nconst data = agora.toFormat('yyyy-MM-dd');\nconst hora = agora.toFormat('HH:mm');\nconst titulo = String(p.titulo || 'Sem título').replace(/[\\\\/:*?\"<>|']/g, '').trim().slice(0, 80);\nconst conteudo = String(p.conteudo || '').trim();\nconst proposta = String(p.tipo || '').toLowerCase().startsWith('prop');\nif (proposta) {\n  return [{ json: {\n    pasta: 'Propostas de atualização',\n    nome: data + ' ' + hora.replace(':', 'h') + ' — ' + titulo + '.md',\n    cabecalho: '---\\ntipo: zezinho-proposta\\ncerebro: atual\\nstatus: pendente\\natualizado: ' + data + '\\n---\\n\\n# ' + titulo + '\\n_Proposta do Zezinho em ' + agora.toFormat('dd/MM/yyyy HH:mm') + '. O Redacted decide se aplica na nota principal._\\n\\n',\n    entrada: conteudo + '\\n'\n  } }];\n}\nreturn [{ json: {\n  pasta: 'Diário do Zezinho',\n  nome: data + '.md',\n  cabecalho: '---\\ntipo: zezinho-diario\\ncerebro: atual\\natualizado: ' + data + '\\n---\\n\\n# Diário do Zezinho — ' + agora.toFormat('dd/MM/yyyy') + '\\nLigado a [[Novo Zezinho — plano]].\\n',\n  entrada: '\\n## ' + hora + ' — ' + titulo + '\\n' + conteudo + '\\n'\n} }];"
+      }
+    },
+    {
+      "name": "Drive - achar pasta",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        96
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "=name = '{{ $json.pasta }}' and mimeType = 'application/vnd.google-apps.folder' and trashed = false"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Drive - achar nota",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        672,
+        96
+      ],
+      "parameters": {
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "q",
+              "value": "=name = '{{ $('Montar nota').first().json.nome }}' and '{{ $json.files[0].id }}' in parents and trashed = false"
+            },
+            {
+              "name": "fields",
+              "value": "files(id,name)"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Nota já existe?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        896,
+        96
+      ],
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ ($json.files || []).length }}",
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              },
+              "rightValue": 0
+            }
+          ],
+          "combinator": "and"
+        }
+      }
+    },
+    {
+      "name": "Drive - ler nota atual",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        0
+      ],
+      "parameters": {
+        "url": "=https://www.googleapis.com/drive/v3/files/{{ $json.files[0].id }}?alt=media",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "options": {
+          "response": {
+            "response": {
+              "responseFormat": "text",
+              "outputPropertyName": "conteudo"
+            }
+          }
+        }
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Acrescentar no fim",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        0
+      ],
+      "parameters": {
+        "jsCode": "const m = $('Montar nota').first().json;\nconst id = $('Drive - achar nota').first().json.files[0].id;\nreturn [{ json: { id, texto: String($input.first().json.conteudo || '').replace(/\\s+$/, '') + '\\n' + m.entrada } }];"
+      }
+    },
+    {
+      "name": "Drive - gravar texto",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1568,
+        96
+      ],
+      "parameters": {
+        "method": "PATCH",
+        "url": "=https://www.googleapis.com/upload/drive/v3/files/{{ $json.id }}?uploadType=media",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "contentType": "raw",
+        "rawContentType": "text/markdown; charset=UTF-8",
+        "body": "={{ $json.texto }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Resposta ao agente",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1792,
+        96
+      ],
+      "parameters": {
+        "mode": "manual",
+        "includeOtherFields": false,
+        "assignments": {
+          "assignments": [
+            {
+              "id": "r",
+              "name": "resultado",
+              "value": "=OK: gravado no Obsidian em Zezinho/{{ $('Montar nota').first().json.pasta }}/{{ $('Montar nota').first().json.nome }}",
+              "type": "string"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "Drive - criar nota",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1120,
+        192
+      ],
+      "parameters": {
+        "method": "POST",
+        "url": "https://www.googleapis.com/drive/v3/files",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "googleDriveOAuth2Api",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ name: $('Montar nota').first().json.nome, parents: [$('Drive - achar pasta').first().json.files[0].id], mimeType: 'text/markdown' }) }}",
+        "options": {}
+      },
+      "credentials": {
+        "googleDriveOAuth2Api": {
+          "id": "<CREDENTIAL_ID>",
+          "name": "googleDriveOAuth2Api"
+        }
+      }
+    },
+    {
+      "name": "Conteúdo da nota nova",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        192
+      ],
+      "parameters": {
+        "jsCode": "const m = $('Montar nota').first().json;\nreturn [{ json: { id: $input.first().json.id, texto: m.cabecalho + m.entrada } }];"
+      }
+    }
+  ],
+  "connections": {
+    "Pedido do agente": {
+      "main": [
+        [
+          {
+            "node": "Montar nota",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Montar nota": {
+      "main": [
+        [
+          {
+            "node": "Drive - achar pasta",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - achar pasta": {
+      "main": [
+        [
+          {
+            "node": "Drive - achar nota",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - achar nota": {
+      "main": [
+        [
+          {
+            "node": "Nota já existe?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Nota já existe?": {
+      "main": [
+        [
+          {
+            "node": "Drive - ler nota atual",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Drive - criar nota",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - ler nota atual": {
+      "main": [
+        [
+          {
+            "node": "Acrescentar no fim",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Acrescentar no fim": {
+      "main": [
+        [
+          {
+            "node": "Drive - gravar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - gravar texto": {
+      "main": [
+        [
+          {
+            "node": "Resposta ao agente",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Drive - criar nota": {
+      "main": [
+        [
+          {
+            "node": "Conteúdo da nota nova",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Conteúdo da nota nova": {
+      "main": [
+        [
+          {
+            "node": "Drive - gravar texto",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  }
+}
